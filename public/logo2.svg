@@ -1,0 +1,5 @@
+<svg width="200" height="60" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="0" y="38" font-family="Poppins, sans-serif" font-size="28" font-weight="600" fill="white">Anto</text>
+  <text x="95" y="38" font-family="Poppins, sans-serif" font-size="28" font-weight="300" fill="#3A86FF">Lab</text>
+  <circle cx="80" cy="30" r="4" fill="#3A86FF"/>
+</svg>

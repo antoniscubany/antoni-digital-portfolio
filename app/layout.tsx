@@ -25,6 +25,9 @@ export const metadata: Metadata = {
       "Precision-engineered AI systems for high-stakes business growth.",
     type: "website",
   },
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 export default function RootLayout({

@@ -1,6 +1,8 @@
 import Navbar from "@/components/Navbar";
 import Hero from "@/components/Hero";
 import Footer from "@/components/Footer";
+import KeyboardFaq from "@/components/KeyboardFaq";
+import Testimonials from "@/components/Testimonials";
 
 export default function Home() {
   return (
@@ -9,6 +11,8 @@ export default function Home() {
       <Navbar />
       <main className="flex-grow">
         <Hero />
+        <KeyboardFaq />
+        <Testimonials />
       </main>
       <Footer />
     </div>

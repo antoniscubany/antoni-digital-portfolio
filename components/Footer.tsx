@@ -18,7 +18,7 @@ export default function Footer() {
 
                 {/* Right: Copyright */}
                 <div className="opacity-60">
-                    © {new Date().getFullYear()} ANTONI.LAB
+                    © {new Date().getFullYear()} ANTO-LAB
                 </div>
             </div>
         </footer>

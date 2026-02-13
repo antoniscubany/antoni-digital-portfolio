@@ -62,7 +62,7 @@ export default function PortfolioPage() {
 interface PortfolioCardProps {
     title: string;
     tag: string;
-    icon: React.ElementType;
+    icon: React.ComponentType<{ className?: string }>;
     href: string;
     color: "emerald" | "cyan";
 }

@@ -2,10 +2,7 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-console.log("Config: API Key loaded:", apiKey ? "YES (starts with " + apiKey.substring(0, 5) + "...)" : "NO");
-
-const genAI = new GoogleGenerativeAI(apiKey || "");
+const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
 
 export async function analyzeAudio(audioBase64: string) {
     try {
@@ -52,10 +49,23 @@ export async function analyzeAudio(audioBase64: string) {
         const response = await result.response;
         const text = response.text();
 
-        // 5. Parsowanie JSON (czyszczenie ewentualnych znaczników markdown)
-        const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        // 5. Parsowanie JSON (czyszczenie ewentualnych znaczników markdown i zbędnych spacji)
+        const cleanText = text
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
 
-        return JSON.parse(cleanText);
+        try {
+            return JSON.parse(cleanText);
+        } catch (parseError) {
+            console.error("JSON Parse Error. Raw text:", text);
+            // Próba wyciągnięcia JSONa jeśli jest w środku innego tekstu
+            const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error("Failed to parse AI response as JSON.");
+        }
 
     } catch (error: any) {
         console.error("AI Error Details:", error);

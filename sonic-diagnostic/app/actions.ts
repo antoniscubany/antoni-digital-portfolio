@@ -11,7 +11,7 @@ export async function analyzeMedia(
 ) {
     try {
         // Gemini 2.0 Flash — fast multimodal (audio, video, image)
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3" });
 
         const userContext = `Machine Category: ${context.category}\nMake & Model: ${context.makeModel || 'Unknown'}\nObserved Symptoms: ${context.symptoms || 'None provided'}`;
 

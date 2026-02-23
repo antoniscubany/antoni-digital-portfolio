@@ -11,7 +11,7 @@ export async function analyzeMedia(
 ) {
     try {
         // Gemini 2.0 Flash — fast multimodal (audio, video, image)
-        const model = genAI.getGenerativeModel({ model: "gemini-3" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro" });
 
         const userContext = `Machine Category: ${context.category}\nMake & Model: ${context.makeModel || 'Unknown'}\nObserved Symptoms: ${context.symptoms || 'None provided'}`;
 
@@ -79,11 +79,11 @@ export async function analyzeMedia(
             throw new Error("Failed to parse AI response as JSON.");
         }
 
-    } catch (error: any) {
+    } catch (error) {
         console.error("AI Error Details:", error);
 
         let errorMessage = "Failed to analyze media.";
-        if (error.message) {
+        if (error instanceof Error && error.message) {
             errorMessage += ` Details: ${error.message}`;
         }
 

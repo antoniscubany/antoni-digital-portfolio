@@ -2,76 +2,77 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Mic, Activity, AlertTriangle, Wrench, Square, RefreshCcw,
-  ChevronRight, Upload, MessageSquare, Cpu, Home, Factory
-} from 'lucide-react';
+import { useTheme } from 'next-themes';
+import { useLanguage } from './providers';
 import { analyzeMedia } from './actions';
+import {
+  Mic, Settings, Sun, Moon, Globe, AlertTriangle,
+  X, Cpu, Home, Factory, Wrench, RotateCcw, Activity
+} from 'lucide-react';
 
 // ── Types ──
 type MachineCategory = 'auto' | 'home_appliance' | 'industrial' | null;
 
-const CATEGORIES: { id: MachineCategory; label: string; icon: React.ReactNode }[] = [
-  { id: 'auto', label: 'Auto', icon: <Cpu className="w-5 h-5 mb-1" /> },
-  { id: 'home_appliance', label: 'Home Appliance', icon: <Home className="w-5 h-5 mb-1" /> },
-  { id: 'industrial', label: 'Industrial', icon: <Factory className="w-5 h-5 mb-1" /> },
+interface DiagnosticResult {
+  severity?: string;
+  diagnosis?: string;
+  detected_source?: string;
+  sound_profile?: string;
+  estimated_cost?: string;
+  action_plan?: string;
+  error?: string;
+}
+
+const CATEGORIES: { id: MachineCategory; labelKey: string; icon: React.ReactNode }[] = [
+  { id: 'auto', labelKey: 'cat.auto', icon: <Cpu className="w-5 h-5 mb-1" /> },
+  { id: 'home_appliance', labelKey: 'cat.home', icon: <Home className="w-5 h-5 mb-1" /> },
+  { id: 'industrial', labelKey: 'cat.industrial', icon: <Factory className="w-5 h-5 mb-1" /> },
 ];
 
-const slideVariants = {
-  enter: (direction: number) => ({
-    x: direction > 0 ? '100%' : '-100%',
-    opacity: 0,
-    scale: 0.98,
-  }),
-  center: {
-    x: 0,
-    opacity: 1,
-    scale: 1,
-  },
-  exit: (direction: number) => ({
-    x: direction > 0 ? '-100%' : '100%',
-    opacity: 0,
-    scale: 0.98,
-  }),
-};
-
 export default function SonicDiagnostic() {
-  const [step, setStep] = useState(1);
-  const [direction, setDirection] = useState(1);
+  const { theme, setTheme } = useTheme();
+  const { language, setLanguage, t } = useLanguage();
 
-  const [machineCategory, setMachineCategory] = useState<MachineCategory>(null);
+  // App State
+  const [appState, setAppState] = useState<'idle' | 'recording' | 'processing' | 'result'>('idle');
+  const [showSettings, setShowSettings] = useState(false);
+  const [showResult, setShowResult] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // Diagnostic Params
+  const [machineCategory, setMachineCategory] = useState<MachineCategory>('auto'); // Defaulting to auto so it works 1-tap
   const [makeModel, setMakeModel] = useState('');
   const [symptoms, setSymptoms] = useState('');
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [result, setResult] = useState<DiagnosticResult | null>(null);
 
-  const [result, setResult] = useState<any>(null);
-
+  // Media refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const goTo = (target: number) => {
-    setDirection(target > step ? 1 : -1);
-    setStep(target);
-  };
+  // 100dvh fix
+  useEffect(() => {
+    const setHeight = () => {
+      document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+    };
+    setHeight();
+    window.addEventListener('resize', setHeight);
+    return () => window.removeEventListener('resize', setHeight);
+  }, []);
 
-  const resetAll = () => {
-    setMachineCategory(null);
-    setMakeModel('');
-    setSymptoms('');
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // ── Handlers ──
+  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+  const toggleLanguage = () => setLanguage(language === 'en' ? 'pl' : 'en');
+
+  const startScan = async () => {
     setResult(null);
-    setIsRecording(false);
-    setIsProcessing(false);
-    setUploadedFileName(null);
-    goTo(1);
-  };
+    setShowResult(false);
 
-  const startScanSimulation = async () => {
-    setResult(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -90,9 +91,9 @@ export default function SonicDiagnostic() {
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64Audio = reader.result as string;
-          setIsProcessing(true);
+          setAppState('processing');
 
-          const minDelay = new Promise(resolve => setTimeout(resolve, 3000));
+          const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
 
           try {
             const [diagnosis] = await Promise.all([
@@ -104,425 +105,331 @@ export default function SonicDiagnostic() {
               minDelay
             ]);
             setResult(diagnosis);
-            setDirection(1);
-            setStep(3);
-          } catch (err: any) {
-            setResult({ error: err?.message || 'Analysis failed. Please try again.' });
-            setDirection(1);
-            setStep(3);
-          } finally {
-            setIsProcessing(false);
+            setAppState('result');
+            setShowResult(true);
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : t('report.error');
+            setResult({ error: errorMsg });
+            setAppState('result');
+            setShowResult(true);
           }
         };
       };
 
       mediaRecorder.start();
-      setIsRecording(true);
+      setAppState('recording');
 
+      // Auto stop after 5 seconds to feel snappy like Shazam
       timeoutRef.current = setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
-          stopRecording();
+          stopScan();
         }
-      }, 15000);
+      }, 5000);
+
     } catch {
       console.error('Mic Error');
       alert('Microphone access denied. Please allow microphone permissions.');
+      setAppState('idle');
     }
   };
 
-  const stopRecording = () => {
+  const stopScan = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      setIsRecording(false);
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
     }
   };
 
-  const handleFileUpload = async (file: File) => {
-    const allowedTypes = [
-      'audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/webm', 'audio/ogg', 'audio/flac',
-      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
-      'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      alert(`Unsupported file type: ${file.type}`);
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      alert('File too large. Maximum size is 25MB.');
-      return;
-    }
-
-    setUploadedFileName(file.name);
-    setIsProcessing(true);
-
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onloadend = async () => {
-      const base64 = reader.result as string;
-      const minDelay = new Promise(resolve => setTimeout(resolve, 3000));
-
-      try {
-        const [diagnosis] = await Promise.all([
-          analyzeMedia(base64, file.type, {
-            category: machineCategory || 'unknown',
-            makeModel,
-            symptoms,
-          }),
-          minDelay
-        ]);
-        setResult(diagnosis);
-        setDirection(1);
-        setStep(3);
-      } catch (err: any) {
-        setResult({ error: err?.message || 'Analysis failed. Please try again.' });
-        setDirection(1);
-        setStep(3);
-      } finally {
-        setIsProcessing(false);
-      }
-    };
+  const resetAll = () => {
+    setAppState('idle');
+    setShowResult(false);
+    setResult(null);
   };
 
-  // Fixed 100dvh styling
-  useEffect(() => {
-    const setHeight = () => {
-      document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
-    };
-    setHeight();
-    window.addEventListener('resize', setHeight);
-    return () => window.removeEventListener('resize', setHeight);
-  }, []);
+  if (!mounted) return null;
 
   return (
     <>
       <style dangerouslySetInnerHTML={{
         __html: `
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .dvh-screen { height: 100vh; height: calc(var(--vh, 1vh) * 100); }
+        .shazam-bg {
+           background: radial-gradient(circle at 50% 50%, var(--bg-center) 0%, var(--bg-edge) 100%);
+        }
+        .hide-scroll::-webkit-scrollbar { display: none; }
       `}} />
 
-      <div className="dvh-screen w-full bg-[#020202] text-gray-300 font-mono relative overflow-hidden flex flex-col">
-        {/* GRID BACKGROUND */}
-        <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
-          style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
-        </div>
-        <div className="absolute top-[-10%] left-[-20%] w-[60%] h-[60%] bg-[#f59e0b]/5 blur-[120px] rounded-full pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-20%] w-[60%] h-[60%] bg-[#00f0ff]/5 blur-[120px] rounded-full pointer-events-none"></div>
+      <div className={`dvh-screen w-full relative overflow-hidden transition-colors duration-700 ease-in-out font-sans ${theme === 'dark' ? 'dark text-white' : 'text-slate-900'} `}
+        style={{
+          '--bg-center': theme === 'dark' ? '#1e3a8a' : '#60a5fa', // blue-900 / blue-400
+          '--bg-edge': theme === 'dark' ? '#020617' : '#eff6ff',   // slate-950 / blue-50
+        } as React.CSSProperties}
+      >
+        <div className="absolute inset-0 shazam-bg opacity-40 transition-opacity duration-1000" />
 
         {/* HEADER */}
-        <header className="z-10 pt-6 pb-2 px-6 flex justify-between items-center shrink-0">
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-[#f59e0b] animate-pulse" />
-            <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-[#f59e0b]">Sonic OS</span>
+        <header className="relative z-20 flex justify-between items-center px-6 py-6 shrink-0">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
+          >
+            <Settings className="w-5 h-5 opacity-80" />
+          </button>
+
+          <div className="flex flex-col items-center">
+            <h1 className="text-xl font-bold tracking-tight">{t('app.title')}</h1>
+            <p className="text-[10px] uppercase tracking-widest opacity-60 font-semibold">{t('app.subtitle')}</p>
           </div>
-          <div className="text-[10px] text-white/20 tracking-widest font-bold">V 3.0</div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={toggleLanguage}
+              className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
+            >
+              <Globe className="w-5 h-5 opacity-80" />
+            </button>
+            <button
+              onClick={toggleTheme}
+              className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
+            >
+              {theme === 'dark' ? <Sun className="w-5 h-5 opacity-80" /> : <Moon className="w-5 h-5 opacity-80" />}
+            </button>
+          </div>
         </header>
 
-        {/* MAIN AREA */}
-        <div className="flex-1 relative w-full overflow-hidden">
-          <AnimatePresence mode="wait" custom={direction}>
+        {/* MAIN IDLE / LISTENING UI */}
+        <div className="relative z-10 flex-1 h-full flex flex-col items-center justify-center -mt-20">
 
-            {/* ═ STATE 1: INITIALIZE PARAMETERS ═ */}
-            {step === 1 && (
-              <motion.div
-                key="step-1"
-                custom={direction}
-                variants={slideVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="absolute inset-0 w-full h-full flex flex-col px-6 pb-6 pt-2"
-              >
-                <div className="flex-1 overflow-y-auto hide-scrollbar flex flex-col">
-                  <div className="mb-8 mt-2">
-                    <h1 className="text-2xl text-white font-bold tracking-tighter uppercase leading-none">Initialize<br />Parameters</h1>
-                    <div className="h-[1px] w-12 bg-[#00f0ff]/30 mt-4" />
-                  </div>
-
-                  <div className="flex flex-col gap-6 flex-1">
-                    {/* Category Toggle */}
-                    <div>
-                      <label className="text-[9px] uppercase tracking-[0.2em] text-white/50 mb-3 block font-bold">
-                        Machine Category
-                      </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {CATEGORIES.map((cat) => (
-                          <button
-                            key={cat.id}
-                            onClick={() => setMachineCategory(cat.id)}
-                            className={`
-                              relative flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-2xl border transition-all duration-300
-                              ${machineCategory === cat.id
-                                ? 'border-[#f59e0b]/50 bg-[#f59e0b]/[0.08] text-[#f59e0b]'
-                                : 'border-white/5 bg-white/[0.02] text-white/40'}
-                            `}
-                          >
-                            <div className={`transition-transform duration-300 ${machineCategory === cat.id ? 'scale-110' : ''}`}>
-                              {cat.icon}
-                            </div>
-                            <span className="text-[8px] uppercase tracking-[0.1em] font-bold text-center leading-tight">
-                              {cat.label}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Make & Model */}
-                    <div>
-                      <label className="text-[9px] uppercase tracking-[0.2em] text-white/50 mb-3 block font-bold">
-                        Make & Model
-                      </label>
-                      <input
-                        type="text"
-                        value={makeModel}
-                        onChange={(e) => setMakeModel(e.target.value)}
-                        placeholder="e.g. BMW e46"
-                        className="w-full bg-white/[0.02] border border-white/5 rounded-2xl px-5 py-4 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#00f0ff]/30 focus:bg-[#00f0ff]/[0.02] transition-colors font-mono"
-                      />
-                    </div>
-
-                    {/* Symptoms */}
-                    <div className="flex-1 flex flex-col min-h-[120px]">
-                      <label className="text-[9px] uppercase tracking-[0.2em] text-white/50 mb-3 block font-bold">
-                        Symptoms
-                      </label>
-                      <textarea
-                        value={symptoms}
-                        onChange={(e) => setSymptoms(e.target.value)}
-                        placeholder="Describe the noise..."
-                        className="flex-1 w-full bg-white/[0.02] border border-white/5 rounded-2xl px-5 py-4 text-sm text-white placeholder-white/20 focus:outline-none focus:border-[#00f0ff]/30 focus:bg-[#00f0ff]/[0.02] transition-colors font-mono resize-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-4 shrink-0 mt-auto">
-                  <button
-                    onClick={() => goTo(2)}
-                    disabled={!machineCategory}
-                    className={`
-                      w-full py-5 rounded-2xl border text-[11px] uppercase tracking-[0.3em] font-bold transition-all duration-300 flex items-center justify-center gap-2
-                      ${machineCategory
-                        ? 'border-[#00f0ff]/40 bg-[#00f0ff]/10 text-[#00f0ff] shadow-[0_0_20px_-5px_rgba(0,240,255,0.3)] hover:bg-[#00f0ff]/20'
-                        : 'border-white/5 bg-white/[0.02] text-white/20 opacity-50 cursor-not-allowed'}
-                    `}
-                  >
-                    Proceed To Sensor
-                    <ChevronRight className={`w-4 h-4 ${machineCategory ? 'opacity-100' : 'opacity-0'}`} />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-            {/* ═ STATE 2: CAPTURE ═ */}
-            {step === 2 && (
-              <motion.div
-                key="step-2"
-                custom={direction}
-                variants={slideVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="absolute inset-0 w-full h-full flex flex-col px-6 pb-6 pt-2"
-              >
-                <div className="shrink-0">
-                  <button
-                    onClick={() => goTo(1)}
-                    disabled={isProcessing}
-                    className="text-[9px] uppercase tracking-[0.2em] text-white/40 py-2 active:text-white/80 transition-colors"
-                  >
-                    ← Back
-                  </button>
-                </div>
-
-                <div className="flex-1 flex flex-col items-center justify-center relative w-full -mt-4">
-
-                  {/* Sonar / Mic Button */}
-                  <div className="relative mb-14 flex justify-center items-center w-full">
-                    <AnimatePresence>
-                      {isRecording && !isProcessing && (
-                        <>
-                          {[1, 2, 3].map((i) => (
-                            <motion.div
-                              key={i}
-                              initial={{ scale: 0.7, opacity: 1 }}
-                              animate={{ scale: 2.5, opacity: 0 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ repeat: Infinity, duration: 2, delay: i * 0.4, ease: 'easeOut' }}
-                              className="absolute rounded-full border border-[#f59e0b]/40 bg-[#f59e0b]/5 aspect-square h-full"
-                            />
-                          ))}
-                        </>
-                      )}
-                    </AnimatePresence>
-
-                    <button
-                      onClick={isRecording ? stopRecording : (isProcessing ? undefined : startScanSimulation)}
-                      disabled={isProcessing}
-                      className={`relative z-10 w-48 h-48 rounded-full border flex flex-col items-center justify-center transition-all duration-500
-                        ${isRecording ? 'border-[#f59e0b] bg-[#f59e0b]/10 shadow-[0_0_50px_-12px_rgba(245,158,11,0.4)]' :
-                          isProcessing ? 'border-[#00f0ff] bg-[#00f0ff]/10 shadow-[0_0_50px_-12px_rgba(0,240,255,0.4)]' :
-                            'border-white/10 bg-white/[0.03] active:border-white/20 active:bg-white/[0.05]'}
-                      `}
-                    >
-                      {isProcessing ? (
-                        <div className="text-center flex flex-col items-center gap-3">
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ repeat: Infinity, duration: 2, ease: 'linear' }}
-                            className="w-10 h-10 border-2 border-[#00f0ff] border-t-transparent rounded-full"
-                          />
-                          <span className="text-[10px] tracking-[0.3em] text-[#00f0ff] font-bold uppercase animate-pulse">
-                            Processing...
-                          </span>
-                        </div>
-                      ) : isRecording ? (
-                        <div className="text-center">
-                          <Square className="w-10 h-10 mx-auto mb-3 text-[#f59e0b] fill-[#f59e0b]/20" />
-                          <span className="text-[10px] tracking-[0.2em] text-[#f59e0b] font-bold uppercase">End Capture</span>
-                        </div>
-                      ) : (
-                        <div className="text-center">
-                          <Mic className="w-12 h-12 mx-auto mb-4 text-white opacity-90" />
-                          <span className="text-[10px] tracking-[0.3em] text-white/50 font-bold uppercase">Start Scan</span>
-                        </div>
-                      )}
-                    </button>
-                  </div>
-
-                  {/* Upload Section */}
-                  <div className="w-full mt-4">
-                    <div className="flex items-center gap-4 w-full mb-6">
-                      <div className="flex-1 h-[1px] bg-gradient-to-r from-transparent to-white/10" />
-                      <span className="text-[9px] uppercase tracking-[0.3em] text-white/30 font-bold shrink-0">Or Upload Media File</span>
-                      <div className="flex-1 h-[1px] bg-gradient-to-l from-transparent to-white/10" />
-                    </div>
-
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="audio/*,video/*,image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleFileUpload(file);
-                      }}
+          {/* Central Animated Shazam Button */}
+          <div className="relative flex justify-center items-center">
+            <AnimatePresence>
+              {appState === 'recording' && (
+                <>
+                  {[1, 2, 3, 4].map((i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ scale: 0.8, opacity: 0.6 }}
+                      animate={{ scale: 3.5, opacity: 0 }}
+                      exit={{ opacity: 0, transition: { duration: 0.2 } }}
+                      transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.5, ease: 'easeOut' }}
+                      className="absolute rounded-full bg-blue-500/30 dark:bg-blue-400/20 aspect-square h-full"
                     />
+                  ))}
+                </>
+              )}
+            </AnimatePresence>
 
-                    <button
-                      disabled={isProcessing}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="w-full py-5 rounded-2xl border border-white/10 bg-white/[0.02] flex items-center justify-center gap-3 active:bg-white/5 transition-colors"
-                    >
-                      <Upload className="w-4 h-4 text-white/50" />
-                      <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-white/70">
-                        Select Audio / Video
-                      </span>
-                    </button>
+            <AnimatePresence>
+              {appState === 'processing' && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1.2 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute w-full h-full rounded-full border-4 border-blue-500/50 border-t-white animate-spin"
+                />
+              )}
+            </AnimatePresence>
+
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={() => {
+                if (appState === 'idle') startScan();
+                else if (appState === 'recording') stopScan();
+              }}
+              className={`
+                relative z-20 w-44 h-44 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all duration-500
+                ${appState === 'recording'
+                  ? 'bg-blue-600 shadow-[0_0_80px_rgba(37,99,235,0.6)] text-white scale-105'
+                  : appState === 'processing'
+                    ? 'bg-blue-500/80 text-white cursor-wait scale-95'
+                    : 'bg-white text-blue-600 dark:bg-white/10 dark:text-white dark:backdrop-blur-xl'}
+              `}
+            >
+              <Mic className={`w-14 h-14 mb-2 transition-all duration-300 ${appState === 'recording' ? 'scale-110 drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]' : ''}`} />
+              <span className="text-xs font-bold uppercase tracking-widest opacity-80">
+                {appState === 'idle' ? t('btn.tapToScan') : appState === 'recording' ? t('btn.listening') : t('btn.processing')}
+              </span>
+            </motion.button>
+          </div>
+        </div>
+
+        {/* BOTTOM SHEET: SETTINGS */}
+        <AnimatePresence>
+          {showSettings && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowSettings(false)}
+                className="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm z-40"
+              />
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                className="absolute bottom-0 left-0 right-0 h-[85vh] bg-white dark:bg-slate-900 rounded-t-[2.5rem] z-50 p-6 shadow-2xl flex flex-col"
+              >
+                <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-6" />
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-2xl font-bold">{t('settings.title')}</h2>
+                  <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto hide-scroll pb-20 flex flex-col gap-6">
+                  {/* Category */}
+                  <div>
+                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
+                      {t('settings.category')}
+                    </label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {CATEGORIES.map(cat => (
+                        <button
+                          key={cat.id}
+                          onClick={() => setMachineCategory(cat.id)}
+                          className={`flex flex-col items-center justify-center p-4 rounded-3xl transition-all ${machineCategory === cat.id
+                            ? 'bg-blue-600 text-white shadow-lg scale-105'
+                            : 'bg-slate-100 dark:bg-slate-800 opacity-70 hover:opacity-100'
+                            }`}
+                        >
+                          {cat.icon}
+                          <span className="text-[10px] font-bold mt-1 text-center leading-tight">{t(cat.labelKey)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Make/Model */}
+                  <div>
+                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
+                      {t('settings.make')}
+                    </label>
+                    <input
+                      type="text"
+                      value={makeModel}
+                      onChange={e => setMakeModel(e.target.value)}
+                      placeholder="e.g. BMW E46"
+                      className="w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-5 py-4 font-medium focus:outline-none focus:ring-2 ring-blue-500"
+                    />
+                  </div>
+
+                  {/* Symptoms */}
+                  <div className="flex-1 flex flex-col">
+                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
+                      {t('settings.symptoms')}
+                    </label>
+                    <textarea
+                      value={symptoms}
+                      onChange={e => setSymptoms(e.target.value)}
+                      placeholder="..."
+                      className="flex-1 min-h-[100px] w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-5 py-4 font-medium focus:outline-none focus:ring-2 ring-blue-500 resize-none"
+                    />
                   </div>
                 </div>
+
+                <div className="pt-4 mt-auto border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="w-full py-5 rounded-full bg-blue-600 text-white font-bold tracking-widest uppercase text-xs shadow-xl active:scale-95 transition-transform"
+                  >
+                    {t('settings.save')}
+                  </button>
+                </div>
               </motion.div>
-            )}
+            </>
+          )}
+        </AnimatePresence>
 
-            {/* ═ STATE 3: REPORT ═ */}
-            {step === 3 && result && (
-              <motion.div
-                key="step-3"
-                custom={direction}
-                variants={slideVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="absolute inset-0 w-full h-full flex flex-col p-6 overflow-y-auto hide-scrollbar"
-              >
-                {/* Report Card */}
-                <div className="flex-1 rounded-3xl bg-white/[0.02] border border-white/10 backdrop-blur-xl overflow-hidden shadow-2xl flex flex-col hide-scrollbar">
-                  {result.error ? (
-                    <div className="p-8 flex-1 flex flex-col items-center justify-center text-center">
-                      <AlertTriangle className="w-12 h-12 text-red-500 mb-4 opacity-80" />
-                      <h3 className="text-sm font-bold uppercase tracking-widest text-red-500 mb-2">Analysis Failed</h3>
-                      <p className="text-[11px] text-white/60 leading-relaxed font-mono">{result.error}</p>
+        {/* FULLSCREEN OVERLAY: RESULT */}
+        <AnimatePresence>
+          {showResult && result && (
+            <motion.div
+              initial={{ y: '100%', opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute inset-0 bg-white dark:bg-[#020617] z-50 flex flex-col overflow-hidden"
+            >
+              {/* Result Header */}
+              <div className="p-6 pt-10 flex justify-between items-center shrink-0">
+                <h2 className="text-2xl font-bold">{t('report.title')}</h2>
+                <button onClick={resetAll} className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full hover:scale-105 active:scale-95">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 pb-24 hide-scroll">
+                {result.error ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center pb-20">
+                    <div className="w-24 h-24 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mb-6">
+                      <AlertTriangle className="w-12 h-12 text-red-500" />
                     </div>
-                  ) : (
-                    <div className="flex-1 flex flex-col relative w-full overflow-y-auto hide-scrollbar">
-                      {/* Severity Bar */}
-                      <div className={`shrink-0 h-1.5 w-full ${result.severity === 'CRITICAL' ? 'bg-red-500' :
-                        result.severity === 'MEDIUM' ? 'bg-[#f59e0b]' : 'bg-green-500'
-                        }`} />
+                    <h3 className="text-xl font-bold mb-3">{t('report.error')}</h3>
+                    <p className="opacity-60">{result.error}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
 
-                      <div className="px-6 pt-6 pb-6 flex-1 flex flex-col">
-                        <div className="flex justify-between items-start mb-6">
-                          <span className={`inline-block text-[9px] uppercase tracking-widest px-2.5 py-1 rounded font-bold ${result.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-500' :
-                            result.severity === 'MEDIUM' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' : 'bg-green-500/20 text-green-500'
-                            }`}>
-                            {result.severity} Priority
-                          </span>
-                          <div className="text-right">
-                            <div className="text-xl font-bold text-white tracking-tighter">94%</div>
-                            <div className="text-[7px] text-white/40 uppercase tracking-widest font-bold">Confidence</div>
-                          </div>
-                        </div>
-
-                        <h2 className="text-2xl font-bold text-white tracking-tight leading-tight mb-2">
-                          {result.diagnosis}
-                        </h2>
-                        <div className="text-[9px] text-white/40 tracking-widest uppercase font-bold mb-8">
-                          Source: <span className="text-white/80">{result.detected_source}</span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 mb-8">
-                          <div className="bg-white/[0.02] p-4 rounded-2xl border border-white/5">
-                            <div className="text-[8px] text-white/40 uppercase tracking-widest mb-1 font-bold">Signature</div>
-                            <div className="text-[10px] text-white/80 leading-relaxed">{result.sound_profile}</div>
-                          </div>
-                          <div className="bg-white/[0.02] p-4 rounded-2xl border border-white/5">
-                            <div className="text-[8px] text-white/40 uppercase tracking-widest mb-1 font-bold">Estimated Cost</div>
-                            <div className="text-lg font-bold text-[#00f0ff]">{result.estimated_cost}</div>
-                          </div>
-                        </div>
-
-                        <div className="mt-auto shrink-0 bg-[#00f0ff]/5 p-5 rounded-2xl border border-[#00f0ff]/20">
-                          <div className="flex items-center gap-2 mb-3">
-                            <Wrench className="w-3.5 h-3.5 text-[#00f0ff]" />
-                            <span className="text-[9px] text-[#00f0ff] uppercase tracking-widest font-bold">Actionable Protocol</span>
-                          </div>
-                          <p className="text-[11px] text-white/70 leading-relaxed italic">
-                            &quot;{result.action_plan}&quot;
-                          </p>
-                        </div>
+                    {/* Priority Hero Card */}
+                    <div className={`p-8 rounded-[2rem] text-white shadow-2xl relative overflow-hidden ${result.severity === 'CRITICAL' ? 'bg-gradient-to-br from-red-500 to-red-700' :
+                      result.severity === 'MEDIUM' ? 'bg-gradient-to-br from-amber-500 to-amber-700' :
+                        result.severity === 'INFO' ? 'bg-gradient-to-br from-blue-500 to-blue-700' :
+                          'bg-gradient-to-br from-emerald-500 to-emerald-700'
+                      }`}>
+                      <div className="absolute top-0 right-0 p-6 opacity-20"><Activity className="w-32 h-32" /></div>
+                      <div className="relative z-10">
+                        <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase backdrop-blur-md inline-block mb-4">
+                          {result.severity} {t('report.severity')}
+                        </span>
+                        <h3 className="text-3xl lg:text-4xl font-extrabold leading-tight mb-2 pr-10">{result.diagnosis}</h3>
+                        <p className="text-sm font-semibold opacity-80 uppercase tracking-widest">{t('report.source')}: {result.detected_source}</p>
                       </div>
                     </div>
-                  )}
-                </div>
 
-                {/* Bottom Actions */}
-                <div className="pt-4 shrink-0 flex flex-col gap-3">
-                  <button className="w-full py-4 rounded-2xl border border-[#f59e0b]/30 bg-[#f59e0b]/10 flex items-center justify-center gap-3 text-[#f59e0b] font-bold uppercase tracking-[0.2em] text-[10px] active:bg-[#f59e0b]/20 transition-colors">
-                    <MessageSquare className="w-4 h-4" />
-                    Consult AI Mechanic
-                  </button>
+                    {/* Info Grid */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem]">
+                        <span className="text-xs font-bold uppercase tracking-widest opacity-50 block mb-2">{t('report.signature')}</span>
+                        <p className="font-medium">{result.sound_profile}</p>
+                      </div>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem]">
+                        <span className="text-xs font-bold uppercase tracking-widest opacity-50 block mb-2">{t('report.cost')}</span>
+                        <p className="text-xl font-bold">{result.estimated_cost}</p>
+                      </div>
+                    </div>
 
-                  <button
-                    onClick={resetAll}
-                    className="w-full py-4 rounded-2xl border border-white/10 bg-white/[0.02] flex items-center justify-center gap-2 text-white/50 font-bold uppercase tracking-[0.3em] text-[10px] active:bg-white/5 transition-colors"
-                  >
-                    <RefreshCcw className="w-3.5 h-3.5" />
-                    New Scan
-                  </button>
-                </div>
-              </motion.div>
-            )}
+                    {/* Action Plan */}
+                    <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-6 rounded-[2rem]">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 bg-blue-100 dark:bg-blue-800/50 rounded-full"><Wrench className="w-5 h-5 text-blue-600 dark:text-blue-400" /></div>
+                        <h4 className="font-bold uppercase tracking-widest text-sm text-blue-800 dark:text-blue-300">{t('report.action')}</h4>
+                      </div>
+                      <p className="font-medium leading-relaxed italic opacity-80 text-blue-900 dark:text-blue-100">
+                        &quot;{result.action_plan}&quot;
+                      </p>
+                    </div>
 
-          </AnimatePresence>
-        </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Floating Bottom Action */}
+              <div className="absolute bottom-6 left-6 right-6">
+                <button
+                  onClick={resetAll}
+                  className="w-full py-5 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold uppercase tracking-widest text-xs flex justify-center items-center gap-2 active:scale-95 transition-transform shadow-2xl"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {t('report.newScan')}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </>
   );

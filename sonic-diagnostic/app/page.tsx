@@ -7,7 +7,7 @@ import { useLanguage } from './providers';
 import { analyzeMedia } from './actions';
 import {
   Mic, Settings, Sun, Moon, Globe, AlertTriangle,
-  X, Cpu, Home, Factory, Wrench, RotateCcw, Activity
+  X, Cpu, Home, Factory, Wrench, RotateCcw, Activity, Upload, MessageSquare, Send
 } from 'lucide-react';
 
 // ── Types ──
@@ -46,9 +46,16 @@ export default function SonicDiagnostic() {
 
   const [result, setResult] = useState<DiagnosticResult | null>(null);
 
+  // Chat State
+  const [chatInput, setChatInput] = useState('');
+  const [messages, setMessages] = useState<{ role: string, content: string }[]>([
+    { role: 'assistant', content: 'Hello! I am your AI Mechanic. Do you have any questions about this diagnosis?' }
+  ]);
+
   // Media refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 100dvh fix
@@ -87,44 +94,41 @@ export default function SonicDiagnostic() {
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64Audio = reader.result as string;
-          setAppState('processing');
+        setAppState('processing');
 
-          const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'audio.webm');
+        formData.append('category', machineCategory || 'unknown');
+        formData.append('makeModel', makeModel);
+        formData.append('symptoms', symptoms);
 
-          try {
-            const [diagnosis] = await Promise.all([
-              analyzeMedia(base64Audio, 'audio/webm', {
-                category: machineCategory || 'unknown',
-                makeModel,
-                symptoms,
-              }),
-              minDelay
-            ]);
-            setResult(diagnosis);
-            setAppState('result');
-            setShowResult(true);
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : t('report.error');
-            setResult({ error: errorMsg });
-            setAppState('result');
-            setShowResult(true);
-          }
-        };
+        const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
+
+        try {
+          const [diagnosis] = await Promise.all([
+            analyzeMedia(formData),
+            minDelay
+          ]);
+          setResult(diagnosis);
+          setAppState('result');
+          setShowResult(true);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : t('report.error');
+          setResult({ error: errorMsg });
+          setAppState('result');
+          setShowResult(true);
+        }
       };
 
       mediaRecorder.start();
       setAppState('recording');
 
-      // Auto stop after 5 seconds to feel snappy like Shazam
+      // Auto stop after 12 seconds to feel snappy like Shazam
       timeoutRef.current = setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
           stopScan();
         }
-      }, 5000);
+      }, 12000);
 
     } catch {
       console.error('Mic Error');
@@ -138,6 +142,36 @@ export default function SonicDiagnostic() {
       mediaRecorderRef.current.stop();
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setAppState('processing');
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('category', machineCategory || 'unknown');
+    formData.append('makeModel', makeModel);
+    formData.append('symptoms', symptoms);
+
+    const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
+
+    try {
+      const [diagnosis] = await Promise.all([
+        analyzeMedia(formData),
+        minDelay
+      ]);
+      setResult(diagnosis);
+      setAppState('result');
+      setShowResult(true);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : t('report.error');
+      setResult({ error: errorMsg });
+      setAppState('result');
+      setShowResult(true);
     }
   };
 
@@ -213,9 +247,28 @@ export default function SonicDiagnostic() {
                       animate={{ scale: 3.5, opacity: 0 }}
                       exit={{ opacity: 0, transition: { duration: 0.2 } }}
                       transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.5, ease: 'easeOut' }}
-                      className="absolute rounded-full bg-blue-500/30 dark:bg-blue-400/20 aspect-square h-full"
+                      className="absolute rounded-full bg-blue-500/30 dark:bg-blue-400/20 aspect-square h-full hidden md:block"
                     />
                   ))}
+                  <motion.svg
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute w-[280px] h-[280px] -rotate-90 pointer-events-none z-30" viewBox="0 0 100 100"
+                  >
+                    <motion.circle
+                      cx="50" cy="50" r="48"
+                      fill="transparent"
+                      stroke="currentColor"
+                      className="text-blue-500 dark:text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]"
+                      strokeWidth="1.5"
+                      strokeDasharray="301.59"
+                      initial={{ strokeDashoffset: 301.59 }}
+                      animate={{ strokeDashoffset: 0 }}
+                      transition={{ duration: 12, ease: "linear" }}
+                      strokeLinecap="round"
+                    />
+                  </motion.svg>
                 </>
               )}
             </AnimatePresence>
@@ -251,6 +304,41 @@ export default function SonicDiagnostic() {
                 {appState === 'idle' ? t('btn.tapToScan') : appState === 'recording' ? t('btn.listening') : t('btn.processing')}
               </span>
             </motion.button>
+
+            {/* Secondary Buttons */}
+            <AnimatePresence>
+              {appState === 'idle' && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10, transition: { duration: 0.2 } }}
+                  className="absolute -bottom-24 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-3 w-[340px] z-20"
+                >
+                  <input
+                    type="file"
+                    accept="audio/*,video/*,image/*"
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 flex justify-center items-center gap-2 px-4 py-4 rounded-[2rem] bg-black/5 dark:bg-white/10 backdrop-blur-md hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all text-xs font-bold tracking-widest uppercase shadow-lg border border-black/5 dark:border-white/10 text-slate-800 dark:text-white"
+                  >
+                    <Upload className="w-4 h-4 opacity-70" />
+                    Upload Media
+                  </button>
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    className="flex-1 flex justify-center items-center gap-2 px-4 py-4 rounded-[2rem] bg-black/5 dark:bg-white/10 backdrop-blur-md hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all text-xs font-bold tracking-widest uppercase shadow-lg border border-black/5 dark:border-white/10 text-slate-800 dark:text-white"
+                  >
+                    <Settings className="w-4 h-4 opacity-70" />
+                    Add Context
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
           </div>
         </div>
 
@@ -412,6 +500,58 @@ export default function SonicDiagnostic() {
                         &quot;{result.action_plan}&quot;
                       </p>
                     </div>
+
+                    {/* Chat Interface Fade In */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.5, duration: 0.5 }}
+                      className="mt-8 bg-slate-50 dark:bg-slate-800/30 rounded-[2rem] p-6 border border-slate-100 dark:border-slate-800"
+                    >
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-slate-200 dark:bg-slate-700 rounded-full"><MessageSquare className="w-5 h-5 text-slate-700 dark:text-slate-300" /></div>
+                        <h4 className="font-bold uppercase tracking-widest text-sm">AI Mechanic Chat</h4>
+                      </div>
+
+                      {/* Message History */}
+                      <div className="flex flex-col gap-4 mb-6">
+                        {messages.map((msg, idx) => (
+                          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`p-4 rounded-2xl max-w-[85%] text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-slate-200 dark:bg-slate-700 rounded-bl-sm'}`}>
+                              {msg.content}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Chat Input */}
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && chatInput.trim()) {
+                              setMessages([...messages, { role: 'user', content: chatInput }]);
+                              setChatInput('');
+                            }
+                          }}
+                          placeholder="Ask the AI Mechanic for advice, repair costs..."
+                          className="w-full bg-white dark:bg-[#020617] rounded-full pl-5 pr-12 py-4 text-sm font-medium focus:outline-none focus:ring-2 ring-blue-500 border border-slate-200 dark:border-slate-700"
+                        />
+                        <button
+                          onClick={() => {
+                            if (chatInput.trim()) {
+                              setMessages([...messages, { role: 'user', content: chatInput }]);
+                              setChatInput('');
+                            }
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors shadow-md flex items-center justify-center"
+                        >
+                          <Send className="w-4 h-4 ml-0.5" />
+                        </button>
+                      </div>
+                    </motion.div>
 
                   </div>
                 )}

@@ -4,16 +4,28 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
 
-export async function analyzeMedia(
-    base64Data: string,
-    mimeType: string,
-    context: { category: string; makeModel: string; symptoms: string }
-) {
+// Przyjmujemy natywny format danych (FormData)
+export async function analyzeMedia(formData: FormData) {
     try {
+        // 1. Odbieramy plik i kontekst z formularza
+        const file = formData.get('file') as File;
+        const category = formData.get('category') as string || 'Unknown';
+        const makeModel = formData.get('makeModel') as string || 'Unknown';
+        const symptoms = formData.get('symptoms') as string || 'None provided';
+
+        if (!file) {
+            return { error: 'No file received.' };
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const base64Data = buffer.toString('base64');
+        const mimeType = file.type;
+
         // Gemini 2.0 Flash — fast multimodal (audio, video, image)
         const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
 
-        const userContext = `Machine Category: ${context.category}\nMake & Model: ${context.makeModel || 'Unknown'}\nObserved Symptoms: ${context.symptoms || 'None provided'}`;
+        const userContext = `Machine Category: ${category}\nMake & Model: ${makeModel}\nObserved Symptoms: ${symptoms}`;
 
         const prompt = `
     You are an Elite Multimodal Diagnostic AI — a Master Mechanic, Acoustician, and Visual Inspector.
@@ -46,15 +58,12 @@ export async function analyzeMedia(
     }
     `;
 
-        // Strip the data URI header if present (e.g. "data:audio/webm;base64,...")
-        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-
         const result = await model.generateContent([
             prompt,
             {
                 inlineData: {
                     mimeType: mimeType,
-                    data: cleanBase64
+                    data: base64Data
                 }
             }
         ]);

@@ -21,7 +21,7 @@ export default function PortfolioPage() {
                                 DEPLOYED SYSTEMS
                             </h1>
                             <p className="text-neutral-500 font-mono text-sm tracking-widest uppercase">
-                // ARCHIVE_STATUS: ACTIVE
+                                {"// ARCHIVE_STATUS: ACTIVE"}
                             </p>
                         </div>
                         <div className="hidden md:block">

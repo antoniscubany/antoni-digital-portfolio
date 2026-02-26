@@ -93,8 +93,9 @@ function FloatingIcon({
 
     useEffect(() => {
         const tex = createIconTexture(Icon);
-        setTexture(tex);
+        const handle = requestAnimationFrame(() => setTexture(tex));
         return () => {
+            cancelAnimationFrame(handle);
             tex.dispose();
         };
     }, [Icon]);

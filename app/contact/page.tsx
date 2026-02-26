@@ -48,7 +48,7 @@ export default function ContactPage() {
                         transition={{ duration: 0.6 }}
                     >
                         <h1 className="font-mono-data text-4xl md:text-6xl font-bold mb-6 tracking-tighter">
-                            LET'S BUILD <br />
+                            LET{"'"}S BUILD <br />
                             <span className="text-[var(--electric-cyan)]">EXTRAORDINARY</span>
                         </h1>
                         <p className="text-[var(--slate-grey)] text-lg mb-12 max-w-md leading-relaxed">
@@ -151,7 +151,7 @@ export default function ContactPage() {
                                 </div>
                                 <h3 className="text-2xl font-bold mb-2">Message Sent</h3>
                                 <p className="text-[var(--slate-grey)]">
-                                    We'll analyze your request and get back to you within 24 hours.
+                                    We{"'"}ll analyze your request and get back to you within 24 hours.
                                 </p>
                                 <button
                                     onClick={() => setSubmitted(false)}

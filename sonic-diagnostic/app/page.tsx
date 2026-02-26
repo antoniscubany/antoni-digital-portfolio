@@ -1,576 +1,935 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useTheme } from 'next-themes';
-import { useLanguage } from './providers';
-import { analyzeMedia } from './actions';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
+import Image from 'next/image';
 import {
-  Mic, Settings, Sun, Moon, Globe, AlertTriangle,
-  X, Cpu, Home, Factory, Wrench, RotateCcw, Activity, Upload, MessageSquare, Send
+  Mic, Upload, FileText, X,
+  Home, Clock, MessageCircle, Settings,
+  RefreshCcw, AlertTriangle, Wrench, FileAudio,
+  ChevronDown, Globe, User, HelpCircle, Zap,
+  Send
 } from 'lucide-react';
+import { analyzeMedia } from './actions';
 
-// ── Types ──
-type MachineCategory = 'auto' | 'home_appliance' | 'industrial' | null;
+/* ─────────────────────────── SPRING CONFIGS ─────────────────────────── */
+const springBouncy = { type: 'spring' as const, stiffness: 300, damping: 20 };
+const springSmooth = { type: 'spring' as const, stiffness: 200, damping: 25 };
+const springGentle = { type: 'spring' as const, stiffness: 120, damping: 18 };
 
-interface DiagnosticResult {
-  severity?: string;
-  diagnosis?: string;
-  detected_source?: string;
-  sound_profile?: string;
-  estimated_cost?: string;
-  action_plan?: string;
-  error?: string;
-}
+/* ─────────────────────────── TYPES ─────────────────────────── */
+type TabId = 'home' | 'history' | 'chat' | 'settings';
+type ScannerState = 'idle' | 'recording' | 'fileReady' | 'processing';
 
-const CATEGORIES: { id: MachineCategory; labelKey: string; icon: React.ReactNode }[] = [
-  { id: 'auto', labelKey: 'cat.auto', icon: <Cpu className="w-5 h-5 mb-1" /> },
-  { id: 'home_appliance', labelKey: 'cat.home', icon: <Home className="w-5 h-5 mb-1" /> },
-  { id: 'industrial', labelKey: 'cat.industrial', icon: <Factory className="w-5 h-5 mb-1" /> },
-];
-
+/* ═══════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+   ═══════════════════════════════════════════════════════════════════════ */
 export default function SonicDiagnostic() {
-  const { theme, setTheme } = useTheme();
-  const { language, setLanguage, t } = useLanguage();
+  // ── App state
+  const [showSplash, setShowSplash] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabId>('home');
+  const [scannerState, setScannerState] = useState<ScannerState>('idle');
+  const [showContextSheet, setShowContextSheet] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [showChatBubble, setShowChatBubble] = useState(false);
 
-  // App State
-  const [appState, setAppState] = useState<'idle' | 'recording' | 'processing' | 'result'>('idle');
-  const [showSettings, setShowSettings] = useState(false);
-  const [showResult, setShowResult] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  // Diagnostic Params
-  const [machineCategory, setMachineCategory] = useState<MachineCategory>('auto'); // Defaulting to auto so it works 1-tap
+  // ── Context
+  const [category, setCategory] = useState('Auto');
   const [makeModel, setMakeModel] = useState('');
   const [symptoms, setSymptoms] = useState('');
 
-  const [result, setResult] = useState<DiagnosticResult | null>(null);
-
-  // Chat State
-  const [chatInput, setChatInput] = useState('');
-  const [messages, setMessages] = useState<{ role: string, content: string }[]>([
-    { role: 'assistant', content: 'Hello! I am your AI Mechanic. Do you have any questions about this diagnosis?' }
-  ]);
-
-  // Media refs
+  // ── Recording & File
+  const [result, setResult] = useState<any>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [countdown, setCountdown] = useState(12);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 100dvh fix
+  // ── Splash screen timer
   useEffect(() => {
-    const setHeight = () => {
-      document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
-    };
-    setHeight();
-    window.addEventListener('resize', setHeight);
-    return () => window.removeEventListener('resize', setHeight);
+    const t = setTimeout(() => setShowSplash(false), 2800);
+    return () => clearTimeout(t);
   }, []);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // ── Handlers ──
-  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
-  const toggleLanguage = () => setLanguage(language === 'en' ? 'pl' : 'en');
-
-  const startScan = async () => {
-    setResult(null);
-    setShowResult(false);
-
+  // ── Recording logic (preserved from original)
+  const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      setCountdown(12);
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setAppState('processing');
-
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorderRef.current?.mimeType || 'audio/webm',
+        });
         const formData = new FormData();
-        formData.append('file', audioBlob, 'audio.webm');
-        formData.append('category', machineCategory || 'unknown');
+        formData.append('file', audioBlob, 'recording.webm');
+        formData.append('category', category);
         formData.append('makeModel', makeModel);
         formData.append('symptoms', symptoms);
 
-        const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
-
-        try {
-          const [diagnosis] = await Promise.all([
-            analyzeMedia(formData),
-            minDelay
-          ]);
-          setResult(diagnosis);
-          setAppState('result');
-          setShowResult(true);
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : t('report.error');
-          setResult({ error: errorMsg });
-          setAppState('result');
-          setShowResult(true);
-        }
+        setScannerState('processing');
+        const diagnosis = await analyzeMedia(formData);
+        setResult(diagnosis);
+        setScannerState('idle');
+        setShowResults(true);
+        setTimeout(() => setShowChatBubble(true), 1200);
       };
 
       mediaRecorder.start();
-      setAppState('recording');
+      setScannerState('recording');
 
-      // Auto stop after 12 seconds to feel snappy like Shazam
-      timeoutRef.current = setTimeout(() => {
+      // Countdown
+      let sec = 12;
+      countdownRef.current = setInterval(() => {
+        sec--;
+        setCountdown(sec);
+        if (sec <= 0 && countdownRef.current) clearInterval(countdownRef.current);
+      }, 1000);
+
+      // 12-second auto-stop
+      setTimeout(() => {
         if (mediaRecorder.state !== 'inactive') {
-          stopScan();
+          mediaRecorder.stop();
+          stream.getTracks().forEach(track => track.stop());
+          setScannerState('processing');
         }
+        if (countdownRef.current) clearInterval(countdownRef.current);
       }, 12000);
-
     } catch {
-      console.error('Mic Error');
-      alert('Microphone access denied. Please allow microphone permissions.');
-      setAppState('idle');
+      alert('Błąd mikrofonu. Sprawdź uprawnienia.');
     }
-  };
+  }, [category, makeModel, symptoms]);
 
-  const stopScan = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // ── File upload handler (preserved logic)
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
+    setUploadedFile(file);
+    setScannerState('fileReady');
+  };
 
-    setAppState('processing');
-
+  // ── Analyze uploaded file
+  const analyzeUploadedFile = async () => {
+    if (!uploadedFile) return;
     const formData = new FormData();
-    formData.append('file', file);
-    formData.append('category', machineCategory || 'unknown');
+    formData.append('file', uploadedFile);
+    formData.append('category', category);
     formData.append('makeModel', makeModel);
     formData.append('symptoms', symptoms);
 
-    const minDelay = new Promise(resolve => setTimeout(resolve, 2500));
-
-    try {
-      const [diagnosis] = await Promise.all([
-        analyzeMedia(formData),
-        minDelay
-      ]);
-      setResult(diagnosis);
-      setAppState('result');
-      setShowResult(true);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : t('report.error');
-      setResult({ error: errorMsg });
-      setAppState('result');
-      setShowResult(true);
-    }
+    setScannerState('processing');
+    const diagnosis = await analyzeMedia(formData);
+    setResult(diagnosis);
+    setScannerState('idle');
+    setUploadedFile(null);
+    setShowResults(true);
+    setTimeout(() => setShowChatBubble(true), 1200);
   };
 
-  const resetAll = () => {
-    setAppState('idle');
-    setShowResult(false);
+  // ── Reset
+  const resetScan = () => {
+    setShowResults(false);
+    setShowChatBubble(false);
     setResult(null);
+    setUploadedFile(null);
+    setScannerState('idle');
   };
 
-  if (!mounted) return null;
+  /* ═══════════════════════════════════════════════════════════
+     SPLASH SCREEN
+     ═══════════════════════════════════════════════════════════ */
+  if (showSplash) {
+    return (
+      <div className="fixed inset-0 bg-[#05050a] flex items-center justify-center z-50">
+        {/* Ambient glow */}
+        <div className="absolute w-[400px] h-[400px] bg-[#00d4ff]/8 blur-[120px] rounded-full" />
 
-  return (
-    <>
-      <style dangerouslySetInnerHTML={{
-        __html: `
-        .dvh-screen { height: 100vh; height: calc(var(--vh, 1vh) * 100); }
-        .shazam-bg {
-           background: radial-gradient(circle at 50% 50%, var(--bg-center) 0%, var(--bg-edge) 100%);
-        }
-        .hide-scroll::-webkit-scrollbar { display: none; }
-      `}} />
-
-      <div className={`dvh-screen w-full relative overflow-hidden transition-colors duration-700 ease-in-out font-sans ${theme === 'dark' ? 'dark text-white' : 'text-slate-900'} `}
-        style={{
-          '--bg-center': theme === 'dark' ? '#1e3a8a' : '#60a5fa', // blue-900 / blue-400
-          '--bg-edge': theme === 'dark' ? '#020617' : '#eff6ff',   // slate-950 / blue-50
-        } as React.CSSProperties}
-      >
-        <div className="absolute inset-0 shazam-bg opacity-40 transition-opacity duration-1000" />
-
-        {/* HEADER */}
-        <header className="relative z-20 flex justify-between items-center px-6 py-6 shrink-0">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
-          >
-            <Settings className="w-5 h-5 opacity-80" />
-          </button>
-
-          <div className="flex flex-col items-center">
-            <h1 className="text-xl font-bold tracking-tight">{t('app.title')}</h1>
-            <p className="text-[10px] uppercase tracking-widest opacity-60 font-semibold">{t('app.subtitle')}</p>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={toggleLanguage}
-              className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
-            >
-              <Globe className="w-5 h-5 opacity-80" />
-            </button>
-            <button
-              onClick={toggleTheme}
-              className="p-3 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
-            >
-              {theme === 'dark' ? <Sun className="w-5 h-5 opacity-80" /> : <Moon className="w-5 h-5 opacity-80" />}
-            </button>
-          </div>
-        </header>
-
-        {/* MAIN IDLE / LISTENING UI */}
-        <div className="relative z-10 flex-1 h-full flex flex-col items-center justify-center -mt-20">
-
-          {/* Central Animated Shazam Button */}
-          <div className="relative flex justify-center items-center">
-            <AnimatePresence>
-              {appState === 'recording' && (
-                <>
-                  {[1, 2, 3, 4].map((i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ scale: 0.8, opacity: 0.6 }}
-                      animate={{ scale: 3.5, opacity: 0 }}
-                      exit={{ opacity: 0, transition: { duration: 0.2 } }}
-                      transition={{ repeat: Infinity, duration: 2.5, delay: i * 0.5, ease: 'easeOut' }}
-                      className="absolute rounded-full bg-blue-500/30 dark:bg-blue-400/20 aspect-square h-full hidden md:block"
-                    />
-                  ))}
-                  <motion.svg
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="absolute w-[280px] h-[280px] -rotate-90 pointer-events-none z-30" viewBox="0 0 100 100"
-                  >
-                    <motion.circle
-                      cx="50" cy="50" r="48"
-                      fill="transparent"
-                      stroke="currentColor"
-                      className="text-blue-500 dark:text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]"
-                      strokeWidth="1.5"
-                      strokeDasharray="301.59"
-                      initial={{ strokeDashoffset: 301.59 }}
-                      animate={{ strokeDashoffset: 0 }}
-                      transition={{ duration: 12, ease: "linear" }}
-                      strokeLinecap="round"
-                    />
-                  </motion.svg>
-                </>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {appState === 'processing' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1.2 }}
-                  exit={{ opacity: 0 }}
-                  className="absolute w-full h-full rounded-full border-4 border-blue-500/50 border-t-white animate-spin"
-                />
-              )}
-            </AnimatePresence>
-
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onClick={() => {
-                if (appState === 'idle') startScan();
-                else if (appState === 'recording') stopScan();
+        <motion.div
+          className="relative flex flex-col items-center"
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          transition={springGentle}
+        >
+          {/* Logo container with the dot animation */}
+          <div className="relative w-28 h-28 mb-6">
+            <Image
+              src="/logo.png"
+              alt="Sonic Diagnostic"
+              width={112}
+              height={112}
+              className="relative z-10"
+              priority
+            />
+            {/* Animated "dot" — a white circle that separates and returns */}
+            <motion.div
+              className="absolute top-1/2 left-1/2 w-3 h-3 bg-white rounded-full z-20"
+              style={{ marginLeft: '-6px', marginTop: '-6px' }}
+              initial={{ x: 0, y: 0, opacity: 0 }}
+              animate={{
+                x: [0, 30, 25, 0],
+                y: [0, -20, -15, 0],
+                opacity: [0, 1, 1, 0.8, 0],
+                scale: [0.5, 1.2, 1, 0.8],
               }}
-              className={`
-                relative z-20 w-44 h-44 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all duration-500
-                ${appState === 'recording'
-                  ? 'bg-blue-600 shadow-[0_0_80px_rgba(37,99,235,0.6)] text-white scale-105'
-                  : appState === 'processing'
-                    ? 'bg-blue-500/80 text-white cursor-wait scale-95'
-                    : 'bg-white text-blue-600 dark:bg-white/10 dark:text-white dark:backdrop-blur-xl'}
-              `}
-            >
-              <Mic className={`w-14 h-14 mb-2 transition-all duration-300 ${appState === 'recording' ? 'scale-110 drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]' : ''}`} />
-              <span className="text-xs font-bold uppercase tracking-widest opacity-80">
-                {appState === 'idle' ? t('btn.tapToScan') : appState === 'recording' ? t('btn.listening') : t('btn.processing')}
-              </span>
-            </motion.button>
+              transition={{
+                duration: 2.2,
+                times: [0, 0.3, 0.6, 1],
+                ease: [
+                  [0.34, 1.56, 0.64, 1],
+                  [0.25, 0.1, 0.25, 1],
+                  [0.68, -0.55, 0.27, 1.55],
+                ],
+              }}
+            />
+          </div>
 
-            {/* Secondary Buttons */}
-            <AnimatePresence>
-              {appState === 'idle' && (
+          <motion.p
+            className="text-white/40 text-xs tracking-[0.3em] uppercase font-medium"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5, ...springSmooth }}
+          >
+            Sonic Diagnostic
+          </motion.p>
+
+          {/* Fade out entire splash */}
+          <motion.div
+            className="fixed inset-0 bg-[#05050a] pointer-events-none z-40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 2.3, duration: 0.5 }}
+          />
+        </motion.div>
+      </div>
+    );
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     MAIN APP SHELL
+     ═══════════════════════════════════════════════════════════ */
+  return (
+    <div className="fixed inset-0 bg-[#05050a] text-white overflow-hidden flex flex-col">
+      {/* ── Ambient background glows ── */}
+      <div className="fixed top-[-30%] left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-[#00d4ff]/6 blur-[180px] rounded-full pointer-events-none" />
+      <div className="fixed bottom-[-20%] right-[-10%] w-[400px] h-[400px] bg-[#6366f1]/5 blur-[150px] rounded-full pointer-events-none" />
+
+      {/* ── SCROLLABLE CONTENT AREA ── */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+        <AnimatePresence mode="wait">
+          {/* ────────── HOME TAB ────────── */}
+          {activeTab === 'home' && !showResults && (
+            <motion.div
+              key="home"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={springSmooth}
+              className="flex flex-col items-center min-h-full px-6 pt-14"
+            >
+              {/* ── Top Alert Tooltip ── */}
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, ...springSmooth }}
+                className="glass-surface rounded-2xl px-5 py-3 mb-12 max-w-xs text-center"
+              >
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  <span className="text-[#00d4ff] font-semibold">Tip:</span> For best results, record
+                  <span className="text-white/70 font-medium"> 0.5m from the engine</span> &amp; add context.
+                </p>
+              </motion.div>
+
+              {/* ── CENTERPIECE: The Mic Button ── */}
+              <div className="relative flex items-center justify-center my-8">
+                {/* Concentric ripples during recording */}
+                {scannerState === 'recording' && (
+                  <>
+                    {[0, 0.4, 0.8, 1.2].map((delay, i) => (
+                      <motion.div
+                        key={i}
+                        className="absolute rounded-full border border-[#00d4ff]/30"
+                        style={{ width: 200, height: 200 }}
+                        initial={{ scale: 1, opacity: 0.6 }}
+                        animate={{ scale: 2.5 + i * 0.3, opacity: 0 }}
+                        transition={{
+                          repeat: Infinity,
+                          duration: 2.5,
+                          delay,
+                          ease: 'easeOut',
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+
+                {/* Processing: spinning ring */}
+                {scannerState === 'processing' && (
+                  <motion.div
+                    className="absolute w-[220px] h-[220px] rounded-full border-2 border-transparent border-t-[#00d4ff] border-r-[#00d4ff]/30"
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
+                  />
+                )}
+
+                {/* Ambient glow behind button */}
                 <motion.div
-                  initial={{ opacity: 0, y: 20 }}
+                  className="absolute w-[180px] h-[180px] rounded-full"
+                  animate={{
+                    boxShadow: scannerState === 'recording'
+                      ? '0 0 80px 20px rgba(0,212,255,0.25)'
+                      : scannerState === 'processing'
+                        ? '0 0 60px 15px rgba(0,212,255,0.15)'
+                        : '0 0 40px 10px rgba(0,212,255,0.08)',
+                  }}
+                  transition={{ duration: 1, ease: 'easeInOut' }}
+                />
+
+                {/* THE BUTTON */}
+                <motion.button
+                  onClick={
+                    scannerState === 'idle'
+                      ? startRecording
+                      : scannerState === 'fileReady'
+                        ? analyzeUploadedFile
+                        : undefined
+                  }
+                  disabled={scannerState === 'recording' || scannerState === 'processing'}
+                  className={`relative z-10 w-[180px] h-[180px] rounded-full flex flex-col items-center justify-center transition-colors duration-500
+                    ${scannerState === 'recording'
+                      ? 'bg-[#00d4ff]/15 border-2 border-[#00d4ff]/60'
+                      : scannerState === 'fileReady'
+                        ? 'bg-[#10b981]/15 border-2 border-[#10b981]/60'
+                        : scannerState === 'processing'
+                          ? 'bg-white/5 border-2 border-white/10'
+                          : 'bg-white/5 border-2 border-white/10 hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5'
+                    }`}
+                  whileHover={scannerState === 'idle' ? { scale: 1.05 } : {}}
+                  whileTap={scannerState === 'idle' ? { scale: 0.95 } : {}}
+                  transition={springBouncy}
+                >
+                  {scannerState === 'processing' ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <motion.div
+                        className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full"
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }}
+                      />
+                      <span className="text-[10px] text-[#00d4ff] font-semibold tracking-[0.2em] uppercase">
+                        Analiza AI...
+                      </span>
+                    </div>
+                  ) : scannerState === 'recording' ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <motion.div
+                        animate={{ scale: [1, 1.15, 1] }}
+                        transition={{ repeat: Infinity, duration: 1.5 }}
+                      >
+                        <Mic className="w-10 h-10 text-[#00d4ff]" />
+                      </motion.div>
+                      <span className="text-2xl font-bold text-[#00d4ff] tabular-nums">{countdown}s</span>
+                      <span className="text-[9px] text-[#00d4ff]/60 font-medium tracking-[0.2em] uppercase">
+                        Nasłuchiwanie
+                      </span>
+                    </div>
+                  ) : scannerState === 'fileReady' ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Zap className="w-10 h-10 text-[#10b981]" />
+                      <span className="text-[11px] text-[#10b981] font-bold tracking-[0.15em] uppercase">
+                        Analizuj
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3">
+                      <Mic className="w-10 h-10 text-white/70" />
+                      <span className="text-[10px] text-white/40 font-medium tracking-[0.15em] uppercase">
+                        Dotknij
+                      </span>
+                    </div>
+                  )}
+                </motion.button>
+              </div>
+
+              {/* ── Action pills below ── */}
+              {(scannerState === 'idle' || scannerState === 'fileReady') && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10, transition: { duration: 0.2 } }}
-                  className="absolute -bottom-24 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-3 w-[340px] z-20"
+                  transition={{ delay: 0.3, ...springSmooth }}
+                  className="flex gap-3 mt-6"
                 >
                   <input
                     type="file"
-                    accept="audio/*,video/*,image/*"
-                    className="hidden"
+                    accept="video/*,audio/*,image/*"
                     ref={fileInputRef}
                     onChange={handleFileUpload}
+                    className="hidden"
                   />
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 flex justify-center items-center gap-2 px-4 py-4 rounded-[2rem] bg-black/5 dark:bg-white/10 backdrop-blur-md hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all text-xs font-bold tracking-widest uppercase shadow-lg border border-black/5 dark:border-white/10 text-slate-800 dark:text-white"
+                    className="glass-surface rounded-full px-5 py-3 flex items-center gap-2 hover:bg-white/8 transition-all active:scale-95"
                   >
-                    <Upload className="w-4 h-4 opacity-70" />
-                    Upload Media
+                    <Upload className="w-4 h-4 text-[#00d4ff]" />
+                    <span className="text-xs text-white/70 font-medium">Upload Media</span>
                   </button>
+
                   <button
-                    onClick={() => setShowSettings(true)}
-                    className="flex-1 flex justify-center items-center gap-2 px-4 py-4 rounded-[2rem] bg-black/5 dark:bg-white/10 backdrop-blur-md hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all text-xs font-bold tracking-widest uppercase shadow-lg border border-black/5 dark:border-white/10 text-slate-800 dark:text-white"
+                    onClick={() => setShowContextSheet(true)}
+                    className="glass-surface rounded-full px-5 py-3 flex items-center gap-2 hover:bg-white/8 transition-all active:scale-95"
                   >
-                    <Settings className="w-4 h-4 opacity-70" />
-                    Add Context
+                    <FileText className="w-4 h-4 text-[#f59e0b]" />
+                    <span className="text-xs text-white/70 font-medium">Add Context</span>
                   </button>
                 </motion.div>
               )}
-            </AnimatePresence>
 
-          </div>
-        </div>
-
-        {/* BOTTOM SHEET: SETTINGS */}
-        <AnimatePresence>
-          {showSettings && (
-            <>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setShowSettings(false)}
-                className="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm z-40"
-              />
-              <motion.div
-                initial={{ y: '100%' }}
-                animate={{ y: 0 }}
-                exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="absolute bottom-0 left-0 right-0 h-[85vh] bg-white dark:bg-slate-900 rounded-t-[2.5rem] z-50 p-6 shadow-2xl flex flex-col"
-              >
-                <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-6" />
-                <div className="flex justify-between items-center mb-8">
-                  <h2 className="text-2xl font-bold">{t('settings.title')}</h2>
-                  <button onClick={() => setShowSettings(false)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
-                    <X className="w-5 h-5" />
+              {/* Uploaded file indicator */}
+              {uploadedFile && (
+                <motion.div
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-4 glass-surface rounded-xl px-4 py-2 flex items-center gap-2"
+                >
+                  <FileAudio className="w-4 h-4 text-[#10b981]" />
+                  <span className="text-xs text-white/60 truncate max-w-[200px]">{uploadedFile.name}</span>
+                  <button onClick={() => { setUploadedFile(null); setScannerState('idle'); }} className="ml-1">
+                    <X className="w-3 h-3 text-white/30 hover:text-white/60" />
                   </button>
-                </div>
+                </motion.div>
+              )}
 
-                <div className="flex-1 overflow-y-auto hide-scroll pb-20 flex flex-col gap-6">
-                  {/* Category */}
-                  <div>
-                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
-                      {t('settings.category')}
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
-                      {CATEGORIES.map(cat => (
-                        <button
-                          key={cat.id}
-                          onClick={() => setMachineCategory(cat.id)}
-                          className={`flex flex-col items-center justify-center p-4 rounded-3xl transition-all ${machineCategory === cat.id
-                            ? 'bg-blue-600 text-white shadow-lg scale-105'
-                            : 'bg-slate-100 dark:bg-slate-800 opacity-70 hover:opacity-100'
-                            }`}
-                        >
-                          {cat.icon}
-                          <span className="text-[10px] font-bold mt-1 text-center leading-tight">{t(cat.labelKey)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Make/Model */}
-                  <div>
-                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
-                      {t('settings.make')}
-                    </label>
-                    <input
-                      type="text"
-                      value={makeModel}
-                      onChange={e => setMakeModel(e.target.value)}
-                      placeholder="e.g. BMW E46"
-                      className="w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-5 py-4 font-medium focus:outline-none focus:ring-2 ring-blue-500"
-                    />
-                  </div>
-
-                  {/* Symptoms */}
-                  <div className="flex-1 flex flex-col">
-                    <label className="text-xs uppercase tracking-widest font-semibold opacity-50 mb-3 block">
-                      {t('settings.symptoms')}
-                    </label>
-                    <textarea
-                      value={symptoms}
-                      onChange={e => setSymptoms(e.target.value)}
-                      placeholder="..."
-                      className="flex-1 min-h-[100px] w-full bg-slate-100 dark:bg-slate-800 rounded-2xl px-5 py-4 font-medium focus:outline-none focus:ring-2 ring-blue-500 resize-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-4 mt-auto border-t border-slate-100 dark:border-slate-800">
-                  <button
-                    onClick={() => setShowSettings(false)}
-                    className="w-full py-5 rounded-full bg-blue-600 text-white font-bold tracking-widest uppercase text-xs shadow-xl active:scale-95 transition-transform"
-                  >
-                    {t('settings.save')}
-                  </button>
-                </div>
-              </motion.div>
-            </>
+              {/* Bottom spacer for context info */}
+              {(category !== 'Auto' || makeModel || symptoms) && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="mt-8 text-center"
+                >
+                  <p className="text-[10px] text-white/20 uppercase tracking-widest">Kontekst aktywny</p>
+                  <p className="text-[11px] text-white/40 mt-1">
+                    {category}{makeModel ? ` • ${makeModel}` : ''}{symptoms ? ' • Objawy ✓' : ''}
+                  </p>
+                </motion.div>
+              )}
+            </motion.div>
           )}
-        </AnimatePresence>
 
-        {/* FULLSCREEN OVERLAY: RESULT */}
-        <AnimatePresence>
-          {showResult && result && (
+          {/* ────────── RESULTS VIEW ────────── */}
+          {activeTab === 'home' && showResults && result && (
             <motion.div
-              initial={{ y: '100%', opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: '100%', opacity: 0 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="absolute inset-0 bg-white dark:bg-[#020617] z-50 flex flex-col overflow-hidden"
+              key="results"
+              initial={{ opacity: 0, x: 100 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -100 }}
+              transition={springSmooth}
+              className="px-5 pt-12 pb-8 space-y-4"
             >
-              {/* Result Header */}
-              <div className="p-6 pt-10 flex justify-between items-center shrink-0">
-                <h2 className="text-2xl font-bold">{t('report.title')}</h2>
-                <button onClick={resetAll} className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full hover:scale-105 active:scale-95">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              {result.error ? (
+                <div className="glass-surface rounded-2xl p-8 text-center">
+                  <AlertTriangle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+                  <p className="text-red-300 text-sm">{result.error}</p>
+                  <button
+                    onClick={resetScan}
+                    className="mt-4 text-xs text-white/40 hover:text-white/70 flex items-center gap-1 mx-auto"
+                  >
+                    <RefreshCcw className="w-3 h-3" /> Spróbuj ponownie
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* ── Header ── */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1, ...springSmooth }}
+                    className="flex items-center justify-between mb-2"
+                  >
+                    <h2 className="text-lg font-bold text-white/90">Wynik Diagnostyki</h2>
+                    <button onClick={resetScan} className="text-white/30 hover:text-white/60 transition-colors">
+                      <RefreshCcw className="w-4 h-4" />
+                    </button>
+                  </motion.div>
 
-              <div className="flex-1 overflow-y-auto px-6 pb-24 hide-scroll">
-                {result.error ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center pb-20">
-                    <div className="w-24 h-24 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mb-6">
-                      <AlertTriangle className="w-12 h-12 text-red-500" />
+                  {/* ── BENTO: Main diagnosis ── */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15, ...springSmooth }}
+                    className="glass-surface-strong rounded-2xl p-6"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span
+                        className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase
+                        ${result.severity === 'CRITICAL'
+                            ? 'bg-red-500/15 text-red-400 border border-red-500/20'
+                            : result.severity === 'SAFE'
+                              ? 'bg-green-500/15 text-green-400 border border-green-500/20'
+                              : 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                          }`}
+                      >
+                        {result.severity}
+                      </span>
+                      <span className="text-[#00d4ff] text-xs font-semibold">
+                        {result.confidence_score}% pewności
+                      </span>
                     </div>
-                    <h3 className="text-xl font-bold mb-3">{t('report.error')}</h3>
-                    <p className="opacity-60">{result.error}</p>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
+                    <h3 className="text-xl font-bold text-white leading-tight mb-2">
+                      {result.diagnosis_title || result.diagnosis}
+                    </h3>
+                    <p className="text-sm text-white/50 leading-relaxed">
+                      {result.human_explanation}
+                    </p>
+                  </motion.div>
 
-                    {/* Priority Hero Card */}
-                    <div className={`p-8 rounded-[2rem] text-white shadow-2xl relative overflow-hidden ${result.severity === 'CRITICAL' ? 'bg-gradient-to-br from-red-500 to-red-700' :
-                      result.severity === 'MEDIUM' ? 'bg-gradient-to-br from-amber-500 to-amber-700' :
-                        result.severity === 'INFO' ? 'bg-gradient-to-br from-blue-500 to-blue-700' :
-                          'bg-gradient-to-br from-emerald-500 to-emerald-700'
-                      }`}>
-                      <div className="absolute top-0 right-0 p-6 opacity-20"><Activity className="w-32 h-32" /></div>
-                      <div className="relative z-10">
-                        <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase backdrop-blur-md inline-block mb-4">
-                          {result.severity} {t('report.severity')}
-                        </span>
-                        <h3 className="text-3xl lg:text-4xl font-extrabold leading-tight mb-2 pr-10">{result.diagnosis}</h3>
-                        <p className="text-sm font-semibold opacity-80 uppercase tracking-widest">{t('report.source')}: {result.detected_source}</p>
-                      </div>
-                    </div>
-
-                    {/* Info Grid */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem]">
-                        <span className="text-xs font-bold uppercase tracking-widest opacity-50 block mb-2">{t('report.signature')}</span>
-                        <p className="font-medium">{result.sound_profile}</p>
-                      </div>
-                      <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem]">
-                        <span className="text-xs font-bold uppercase tracking-widest opacity-50 block mb-2">{t('report.cost')}</span>
-                        <p className="text-xl font-bold">{result.estimated_cost}</p>
-                      </div>
-                    </div>
-
-                    {/* Action Plan */}
-                    <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 p-6 rounded-[2rem]">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-blue-100 dark:bg-blue-800/50 rounded-full"><Wrench className="w-5 h-5 text-blue-600 dark:text-blue-400" /></div>
-                        <h4 className="font-bold uppercase tracking-widest text-sm text-blue-800 dark:text-blue-300">{t('report.action')}</h4>
-                      </div>
-                      <p className="font-medium leading-relaxed italic opacity-80 text-blue-900 dark:text-blue-100">
-                        &quot;{result.action_plan}&quot;
-                      </p>
-                    </div>
-
-                    {/* Chat Interface Fade In */}
+                  {/* ── BENTO: 2-column grid ── */}
+                  <div className="grid grid-cols-2 gap-3">
                     <motion.div
-                      initial={{ opacity: 0, y: 20 }}
+                      initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.5, duration: 0.5 }}
-                      className="mt-8 bg-slate-50 dark:bg-slate-800/30 rounded-[2rem] p-6 border border-slate-100 dark:border-slate-800"
+                      transition={{ delay: 0.25, ...springSmooth }}
+                      className="glass-surface rounded-2xl p-4"
                     >
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="p-2 bg-slate-200 dark:bg-slate-700 rounded-full"><MessageSquare className="w-5 h-5 text-slate-700 dark:text-slate-300" /></div>
-                        <h4 className="font-bold uppercase tracking-widest text-sm">AI Mechanic Chat</h4>
-                      </div>
-
-                      {/* Message History */}
-                      <div className="flex flex-col gap-4 mb-6">
-                        {messages.map((msg, idx) => (
-                          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`p-4 rounded-2xl max-w-[85%] text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-slate-200 dark:bg-slate-700 rounded-bl-sm'}`}>
-                              {msg.content}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Chat Input */}
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={chatInput}
-                          onChange={(e) => setChatInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && chatInput.trim()) {
-                              setMessages([...messages, { role: 'user', content: chatInput }]);
-                              setChatInput('');
-                            }
-                          }}
-                          placeholder="Ask the AI Mechanic for advice, repair costs..."
-                          className="w-full bg-white dark:bg-[#020617] rounded-full pl-5 pr-12 py-4 text-sm font-medium focus:outline-none focus:ring-2 ring-blue-500 border border-slate-200 dark:border-slate-700"
-                        />
-                        <button
-                          onClick={() => {
-                            if (chatInput.trim()) {
-                              setMessages([...messages, { role: 'user', content: chatInput }]);
-                              setChatInput('');
-                            }
-                          }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors shadow-md flex items-center justify-center"
-                        >
-                          <Send className="w-4 h-4 ml-0.5" />
-                        </button>
-                      </div>
+                      <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2 flex items-center gap-1">
+                        <FileAudio className="w-3 h-3" /> Analiza
+                      </p>
+                      <p className="text-xs text-white/70 leading-relaxed line-clamp-4">
+                        {result.reasoning}
+                      </p>
                     </motion.div>
 
+                    <motion.div
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3, ...springSmooth }}
+                      className="glass-surface rounded-2xl p-4 border-[#00d4ff]/10"
+                      style={{ borderColor: 'rgba(0,212,255,0.1)' }}
+                    >
+                      <p className="text-[10px] text-[#00d4ff]/60 uppercase tracking-wider mb-2">
+                        Koszt
+                      </p>
+                      <p className="text-base font-bold text-[#00d4ff]">
+                        {result.cost_and_action?.match(/[\d,.]+\s*(?:PLN|zł)/i)?.[0] || '—'}
+                      </p>
+                      <p className="text-[10px] text-white/30 mt-1">szacunkowo</p>
+                    </motion.div>
                   </div>
-                )}
+
+                  {/* ── BENTO: Recommendation ── */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.35, ...springSmooth }}
+                    className="glass-surface rounded-2xl p-5"
+                    style={{ borderColor: 'rgba(245,158,11,0.12)' }}
+                  >
+                    <p className="text-[10px] text-[#f59e0b]/70 uppercase font-semibold mb-2 flex items-center gap-2 tracking-wider">
+                      <Wrench className="w-3.5 h-3.5" /> Rekomendacja
+                    </p>
+                    <p className="text-sm text-white/60 leading-relaxed">
+                      {result.cost_and_action || result.action_plan}
+                    </p>
+                  </motion.div>
+
+                  {/* ── Inline Chat Section ── */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.45, ...springSmooth }}
+                    className="glass-surface rounded-2xl overflow-hidden mt-2"
+                  >
+                    <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
+                      <span className="text-xs font-semibold text-white/70">AI Mechanik Online</span>
+                    </div>
+                    <div className="p-4 space-y-3 max-h-40 overflow-y-auto">
+                      <div className="bg-[#00d4ff]/8 border border-[#00d4ff]/10 text-white/70 p-3 rounded-2xl rounded-tl-sm text-sm max-w-[85%] leading-relaxed">
+                        {result.chat_opener || 'Słyszę ten problem. W czym mogę pomóc?'}
+                      </div>
+                    </div>
+                    <div className="p-3 border-t border-white/5 flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Zapytaj mechanika..."
+                        className="flex-1 bg-white/5 text-sm text-white/70 p-2.5 rounded-xl border border-white/5 outline-none focus:border-[#00d4ff]/30 transition-colors placeholder:text-white/20"
+                      />
+                      <button className="bg-[#00d4ff]/10 text-[#00d4ff] px-4 rounded-xl hover:bg-[#00d4ff]/20 transition-colors">
+                        <Send className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </motion.div>
+
+                  {/* ── New Scan ── */}
+                  <motion.button
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                    onClick={resetScan}
+                    className="w-full flex items-center justify-center gap-2 py-4 text-white/25 hover:text-white/50 text-xs tracking-widest uppercase transition-colors mt-2"
+                  >
+                    <RefreshCcw className="w-3.5 h-3.5" /> Nowy Skan
+                  </motion.button>
+                </>
+              )}
+            </motion.div>
+          )}
+
+          {/* ────────── HISTORY TAB ────────── */}
+          {activeTab === 'history' && (
+            <motion.div
+              key="history"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={springSmooth}
+              className="px-6 pt-14"
+            >
+              <h2 className="text-xl font-bold text-white/90 mb-6">Historia</h2>
+
+              <div className="space-y-3">
+                {[
+                  { title: 'Stuk korbowodowy', severity: 'CRITICAL', date: '2 godz. temu', score: 92 },
+                  { title: 'Łożysko alternatora', severity: 'MEDIUM', date: 'Wczoraj', score: 78 },
+                  { title: 'Normalny dźwięk silnika', severity: 'SAFE', date: '3 dni temu', score: 95 },
+                ].map((item, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.1, ...springSmooth }}
+                    className="glass-surface rounded-2xl p-4 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center
+                        ${item.severity === 'CRITICAL' ? 'bg-red-500/10' : item.severity === 'SAFE' ? 'bg-green-500/10' : 'bg-amber-500/10'}`}
+                      >
+                        <FileAudio className={`w-5 h-5 ${item.severity === 'CRITICAL' ? 'text-red-400' : item.severity === 'SAFE' ? 'text-green-400' : 'text-amber-400'}`} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white/80">{item.title}</p>
+                        <p className="text-[10px] text-white/30">{item.date} • {item.score}% pewności</p>
+                      </div>
+                    </div>
+                    <ChevronDown className="w-4 h-4 text-white/20 -rotate-90" />
+                  </motion.div>
+                ))}
               </div>
 
-              {/* Floating Bottom Action */}
-              <div className="absolute bottom-6 left-6 right-6">
-                <button
-                  onClick={resetAll}
-                  className="w-full py-5 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold uppercase tracking-widest text-xs flex justify-center items-center gap-2 active:scale-95 transition-transform shadow-2xl"
+              <div className="mt-8 text-center">
+                <p className="text-[10px] text-white/15 uppercase tracking-widest">Koniec historii</p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ────────── CHAT TAB ────────── */}
+          {activeTab === 'chat' && (
+            <motion.div
+              key="chat"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={springSmooth}
+              className="px-6 pt-14 flex flex-col h-[calc(100dvh-100px)]"
+            >
+              <h2 className="text-xl font-bold text-white/90 mb-6">AI Mechanik</h2>
+
+              <div className="flex-1 overflow-y-auto space-y-4 pb-4">
+                {/* AI Message */}
+                <motion.div
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.1, ...springSmooth }}
+                  className="flex gap-3 items-start max-w-[85%]"
                 >
-                  <RotateCcw className="w-4 h-4" />
-                  {t('report.newScan')}
+                  <div className="w-8 h-8 rounded-full bg-[#00d4ff]/10 flex items-center justify-center flex-shrink-0 mt-1">
+                    <Wrench className="w-4 h-4 text-[#00d4ff]" />
+                  </div>
+                  <div className="bg-white/5 border border-white/5 p-3.5 rounded-2xl rounded-tl-sm">
+                    <p className="text-sm text-white/60 leading-relaxed">
+                      Cześć! Jestem Twoim AI mechanikiem. Zrób skan dźwięku, a pomogę Ci zdiagnozować problem. 🔧
+                    </p>
+                  </div>
+                </motion.div>
+
+                {/* User message mock */}
+                <motion.div
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.2, ...springSmooth }}
+                  className="flex justify-end"
+                >
+                  <div className="bg-[#00d4ff]/10 border border-[#00d4ff]/10 p-3.5 rounded-2xl rounded-tr-sm max-w-[75%]">
+                    <p className="text-sm text-white/70 leading-relaxed">
+                      Silnik stuka na zimnym — co to może być?
+                    </p>
+                  </div>
+                </motion.div>
+
+                {/* AI response */}
+                <motion.div
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3, ...springSmooth }}
+                  className="flex gap-3 items-start max-w-[85%]"
+                >
+                  <div className="w-8 h-8 rounded-full bg-[#00d4ff]/10 flex items-center justify-center flex-shrink-0 mt-1">
+                    <Wrench className="w-4 h-4 text-[#00d4ff]" />
+                  </div>
+                  <div className="bg-white/5 border border-white/5 p-3.5 rounded-2xl rounded-tl-sm">
+                    <p className="text-sm text-white/60 leading-relaxed">
+                      Stukanie na zimnym silniku to najczęściej hydrauliki zaworów lub popychacze. Nagraj dźwięk przez zakładkę &quot;Skaner&quot;, to zdiagnozuję precyzyjnie! 🎯
+                    </p>
+                  </div>
+                </motion.div>
+              </div>
+
+              {/* Chat input */}
+              <div className="glass-surface rounded-2xl p-3 flex gap-2 mb-2">
+                <input
+                  type="text"
+                  placeholder="Napisz wiadomość..."
+                  className="flex-1 bg-transparent text-sm text-white/70 p-2 outline-none placeholder:text-white/20"
+                />
+                <button className="bg-[#00d4ff]/10 text-[#00d4ff] px-4 rounded-xl hover:bg-[#00d4ff]/20 transition-colors">
+                  <Send className="w-4 h-4" />
                 </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ────────── SETTINGS TAB ────────── */}
+          {activeTab === 'settings' && (
+            <motion.div
+              key="settings"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={springSmooth}
+              className="px-6 pt-14 pb-8"
+            >
+              <h2 className="text-xl font-bold text-white/90 mb-8">Ustawienia</h2>
+
+              <div className="space-y-3">
+                {/* Language */}
+                <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#6366f1]/10 flex items-center justify-center">
+                      <Globe className="w-5 h-5 text-[#6366f1]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white/80">Język</p>
+                      <p className="text-[10px] text-white/30">Polski / English</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1">
+                    <span className="px-2.5 py-1 rounded-lg bg-[#00d4ff]/10 text-[#00d4ff] text-xs font-bold">PL</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white/5 text-white/30 text-xs font-medium">EN</span>
+                  </div>
+                </div>
+
+                {/* Account */}
+                <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#10b981]/10 flex items-center justify-center">
+                      <User className="w-5 h-5 text-[#10b981]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white/80">Konto</p>
+                      <p className="text-[10px] text-white/30">Zarządzaj profilem</p>
+                    </div>
+                  </div>
+                  <ChevronDown className="w-4 h-4 text-white/20 -rotate-90" />
+                </div>
+
+                {/* Support */}
+                <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#f59e0b]/10 flex items-center justify-center">
+                      <HelpCircle className="w-5 h-5 text-[#f59e0b]" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white/80">Wsparcie</p>
+                      <p className="text-[10px] text-white/30">FAQ & Kontakt</p>
+                    </div>
+                  </div>
+                  <ChevronDown className="w-4 h-4 text-white/20 -rotate-90" />
+                </div>
+              </div>
+
+              <div className="mt-12 text-center space-y-1">
+                <p className="text-[10px] text-white/15 uppercase tracking-widest">Sonic Diagnostic v5.0</p>
+                <p className="text-[9px] text-white/10">Powered by Gemini 3.1 Pro</p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-    </>
+
+      {/* ═══════════════════════════════════════════════════════════
+         FLOATING CHAT NOTIFICATION BUBBLE
+         ═══════════════════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {showChatBubble && showResults && result && !result.error && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.8 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.9 }}
+            transition={springBouncy}
+            className="fixed bottom-28 right-5 z-30"
+          >
+            <button
+              onClick={() => setShowChatBubble(false)}
+              className="glass-surface-strong rounded-2xl p-4 max-w-[260px] shadow-2xl shadow-black/50 text-left group"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
+                <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">AI Mechanik</span>
+                <X className="w-3 h-3 text-white/20 ml-auto group-hover:text-white/40" />
+              </div>
+              <p className="text-xs text-white/60 leading-relaxed line-clamp-2">
+                {result.chat_opener || 'Mam pytanie do wyników diagnostyki...'}
+              </p>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════════════════════════════════════════════════
+         CONTEXT BOTTOM SHEET
+         ═══════════════════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {showContextSheet && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-40"
+              onClick={() => setShowContextSheet(false)}
+            />
+            {/* Sheet */}
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={springBouncy}
+              className="fixed bottom-0 left-0 right-0 z-50 glass-surface-strong rounded-t-3xl p-6 pb-10 max-h-[80vh] overflow-y-auto"
+            >
+              {/* Handle */}
+              <div className="w-10 h-1 bg-white/15 rounded-full mx-auto mb-6" />
+
+              <h3 className="text-lg font-bold text-white/90 mb-6">Dodaj Kontekst</h3>
+
+              {/* Category */}
+              <label className="text-[10px] text-white/30 uppercase tracking-widest mb-2 block">
+                Kategoria
+              </label>
+              <div className="flex gap-2 mb-5">
+                {['Auto', 'AGD', 'Przemysł', 'Inne'].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategory(cat)}
+                    className={`flex-1 py-2.5 rounded-xl text-xs font-medium transition-all
+                      ${category === cat
+                        ? 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30'
+                        : 'bg-white/5 border border-white/5 text-white/40 hover:bg-white/8'
+                      }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {/* Make & Model */}
+              <label className="text-[10px] text-white/30 uppercase tracking-widest mb-2 block">
+                Marka / Model
+              </label>
+              <input
+                type="text"
+                placeholder="np. BMW E46 / Bosch WAN28..."
+                value={makeModel}
+                onChange={(e) => setMakeModel(e.target.value)}
+                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 mb-5 focus:border-[#00d4ff]/30 outline-none transition-colors placeholder:text-white/15"
+              />
+
+              {/* Symptoms */}
+              <label className="text-[10px] text-white/30 uppercase tracking-widest mb-2 block">
+                Objawy
+              </label>
+              <textarea
+                placeholder="np. stuka na zimnym silniku, grzechocze przy 2000 obr..."
+                value={symptoms}
+                onChange={(e) => setSymptoms(e.target.value)}
+                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 h-28 focus:border-[#00d4ff]/30 outline-none resize-none transition-colors placeholder:text-white/15"
+              />
+
+              {/* Save button */}
+              <button
+                onClick={() => setShowContextSheet(false)}
+                className="w-full mt-6 bg-[#00d4ff]/15 border border-[#00d4ff]/20 text-[#00d4ff] font-semibold py-3.5 rounded-2xl hover:bg-[#00d4ff]/25 transition-all active:scale-[0.98]"
+              >
+                Zapisz Kontekst
+              </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ═══════════════════════════════════════════════════════════
+         BOTTOM NAVIGATION BAR
+         ═══════════════════════════════════════════════════════════ */}
+      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 safe-bottom">
+        <motion.nav
+          initial={{ y: 50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.3, ...springBouncy }}
+          className="glass-surface-strong rounded-full px-2 py-2 flex items-center gap-1"
+        >
+          {([
+            { id: 'home' as TabId, icon: Home, label: 'Skaner' },
+            { id: 'history' as TabId, icon: Clock, label: 'Historia' },
+            { id: 'chat' as TabId, icon: MessageCircle, label: 'Czat' },
+            { id: 'settings' as TabId, icon: Settings, label: 'Ustawienia' },
+          ]).map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  if (tab.id !== 'home') {
+                    setShowResults(false);
+                    setShowChatBubble(false);
+                  }
+                }}
+                className={`relative flex flex-col items-center gap-0.5 px-5 py-2 rounded-full transition-all duration-300
+                  ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
+              >
+                <tab.icon
+                  className={`w-5 h-5 transition-colors duration-300
+                    ${isActive ? 'text-[#00d4ff]' : 'text-white/30'}`}
+                />
+                <span
+                  className={`text-[9px] font-medium transition-colors duration-300
+                    ${isActive ? 'text-[#00d4ff]' : 'text-white/20'}`}
+                >
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
+        </motion.nav>
+      </div>
+    </div>
   );
 }

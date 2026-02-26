@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo, useEffect, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Sphere, Line } from "@react-three/drei";
 import * as THREE from "three";
@@ -90,13 +90,14 @@ function Particles() {
     const pointsRef = useRef<THREE.Points>(null);
     const geometryRef = useRef<THREE.BufferGeometry>(null);
 
-    const { positions, colors } = useMemo(() => {
+    const [particleData, setParticleData] = useState<{ positions: Float32Array; colors: Float32Array } | null>(null);
+
+    useEffect(() => {
         const count = 500;
         const positionsArray = new Float32Array(count * 3);
         const colorsArray = new Float32Array(count * 3);
 
         for (let i = 0; i < count; i++) {
-            // Random position on sphere surface
             const radius = 2.5 + Math.random() * 1.5;
             const theta = Math.random() * Math.PI * 2;
             const phi = Math.acos(2 * Math.random() - 1);
@@ -105,27 +106,26 @@ function Particles() {
             positionsArray[i * 3 + 1] = radius * Math.cos(phi);
             positionsArray[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
 
-            // Blue-ish color
             colorsArray[i * 3] = 0.2 + Math.random() * 0.2;
             colorsArray[i * 3 + 1] = 0.4 + Math.random() * 0.3;
             colorsArray[i * 3 + 2] = 0.8 + Math.random() * 0.2;
         }
 
-        return { positions: positionsArray, colors: colorsArray };
+        setParticleData({ positions: positionsArray, colors: colorsArray });
     }, []);
 
     useEffect(() => {
-        if (geometryRef.current) {
+        if (geometryRef.current && particleData) {
             geometryRef.current.setAttribute(
                 "position",
-                new THREE.BufferAttribute(positions, 3)
+                new THREE.BufferAttribute(particleData.positions, 3)
             );
             geometryRef.current.setAttribute(
                 "color",
-                new THREE.BufferAttribute(colors, 3)
+                new THREE.BufferAttribute(particleData.colors, 3)
             );
         }
-    }, [positions, colors]);
+    }, [particleData]);
 
     useFrame((state, delta) => {
         if (pointsRef.current) {

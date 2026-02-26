@@ -22,40 +22,34 @@ export async function analyzeMedia(formData: FormData) {
         const base64Data = buffer.toString('base64');
         const mimeType = file.type;
 
-        // Gemini 2.0 Flash — fast multimodal (audio, video, image)
+        // Gemini 3.1 Pro Preview
         const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
 
         const userContext = `Machine Category: ${category}\nMake & Model: ${makeModel}\nObserved Symptoms: ${symptoms}`;
 
         const prompt = `
-    You are an Elite Multimodal Diagnostic AI — a Master Mechanic, Acoustician, and Visual Inspector.
-    You will receive an image, audio, OR video of a machine.
-    Analyze ALL available cues simultaneously:
-    - ACOUSTIC: knocking, grinding, hissing, belt squeal, bearing whine, rhythm anomalies
-    - VISUAL: smoke, vibrations, warning lights, broken/worn parts, fluid leaks, rust, discoloration
+      You are an empathetic, highly skilled Master Mechanic and Engineering Diagnostician.
+      Analyze the provided media of a machine.
 
-    USER PROVIDED CONTEXT:
-    """
-    ${userContext}
-    """
+      USER CONTEXT: Category: ${category}, Make/Model: ${makeModel}, Symptoms: ${symptoms}
 
-    STRICT RULES OF ENGAGEMENT:
-    1. CONTEXT IS KING: If the context says it's a "Washing Machine", DO NOT diagnose a "Car Engine". If it says "BMW", tailor the faults to common BMW issues.
-    2. ANTI-HALLUCINATION: If the input is just wind, silence, people talking, music, a selfie, or a non-machine image, output "NON-MECHANICAL NOISE" and "INFO" severity. Do NOT invent a mechanical fault.
-    3. THE "NOMINAL" RULE: If the machine looks/sounds perfectly normal, smooth, and rhythmic (no visual damage, no acoustic anomalies), you MUST diagnose it as "SYSTEM NOMINAL".
-    4. BE SPECIFIC: Do not say "Engine is broken". Say "Worn serpentine belt" or "Connecting rod bearing failure (Rod Knock)".
-    5. MULTIMODAL CROSS-REFERENCE: If you have both audio AND visual data (e.g. video), cross-reference them. A grinding sound + visible rust on a bearing = higher confidence.
+      DIAGNOSTIC RULES:
+      1. TONE: Speak to the user like a friendly, trustworthy expert. Avoid overly robotic/academic jargon in the explanation. Use Polish language (Język polski).
+      2. REASONING: Explain EXACTLY what you heard/saw that led to your conclusion (e.g., "At 0:04 I heard a metallic rhythm...").
+      3. COST REALISM: Factor in the age/make of the car. For an old Mazda/BMW, a full engine rebuild (10k PLN) is often absurd; suggest a used engine swap (3k-5k PLN) instead.
+      4. CONFIDENCE: State honestly how sure you are (0-100%). If audio is bad, lower the score and say you are guessing.
+      5. LANGUAGE: All text fields (except severity) MUST be in Polish.
 
-    RETURN ONLY PURE JSON. NO MARKDOWN. NO BACKTICKS.
-    Structure:
-    { 
-      "detected_source": "Short specific string based on context & input", 
-      "sound_profile": "Detailed description of acoustic/visual anomaly (or lack thereof)", 
-      "diagnosis": "Precise mechanical fault estimation (or 'System Nominal')", 
-      "severity": "LOW" | "MEDIUM" | "CRITICAL" | "INFO" | "SAFE", 
-      "estimated_cost": "Cost estimate in PLN (e.g., '1500 - 3000 PLN' or 'N/A')", 
-      "action_plan": "Specific, actionable technical recommendation" 
-    }
+      RETURN ONLY PURE JSON. NO MARKDOWN.
+      { 
+        "diagnosis_title": "Short name of the issue (e.g., Rod Knock)",
+        "severity": "LOW" | "MEDIUM" | "CRITICAL" | "SAFE", 
+        "confidence_score": 85,
+        "reasoning": "What exactly did you hear/see to make this conclusion? Build trust here.",
+        "human_explanation": "Explain the problem in simple, non-technical terms to a normal person.",
+        "cost_and_action": "Realistic cost estimate in PLN and the smartest next step (e.g., 'Tow it, do not drive').",
+        "chat_opener": "A proactive, friendly question to start the chat based on the fault (e.g., 'Hey! I noticed that loud rod knock. Do you want to know if it's safe to drive to the shop?')"
+      }
     `;
 
         const result = await model.generateContent([

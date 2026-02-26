@@ -23,7 +23,7 @@ function TestimonialCard({ role, quote, className }: TestimonialCardProps) {
             </div>
             <div className="flex flex-col h-full justify-between gap-6">
                 <p className="text-neutral-300 font-sans leading-relaxed text-sm sm:text-base">
-                    "{quote}"
+                    &quot;{quote}&quot;
                 </p>
                 <div>
                     <div className="h-px w-12 bg-white/10 mb-3 group-hover:w-20 transition-all duration-500" />

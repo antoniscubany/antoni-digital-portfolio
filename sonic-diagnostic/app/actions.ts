@@ -1,6 +1,8 @@
 'use server';
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { auth } from "@clerk/nextjs/server";
+import { db } from "@/lib/db";
 
 const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
 
@@ -22,8 +24,9 @@ export async function analyzeMedia(formData: FormData) {
         const base64Data = buffer.toString('base64');
         const mimeType = file.type;
 
-        // Gemini 3.1 Pro Preview
-        const model = genAI.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
+        // Models: primary → fallback
+        const PRIMARY_MODEL = "gemini-3.1-pro-preview";
+        const FALLBACK_MODEL = "gemini-3-pro";
 
         const userContext = `Machine Category: ${category}\nMake & Model: ${makeModel}\nObserved Symptoms: ${symptoms}`;
 
@@ -52,7 +55,7 @@ export async function analyzeMedia(formData: FormData) {
       }
     `;
 
-        const result = await model.generateContent([
+        const contentParts = [
             prompt,
             {
                 inlineData: {
@@ -60,10 +63,44 @@ export async function analyzeMedia(formData: FormData) {
                     data: base64Data
                 }
             }
-        ]);
+        ];
 
-        const response = await result.response;
-        const text = response.text();
+        // Helper: check if error is an overload/rate-limit
+        const isOverloadError = (err: unknown): boolean => {
+            if (!(err instanceof Error)) return false;
+            const msg = err.message.toLowerCase();
+            return msg.includes('429') ||
+                msg.includes('503') ||
+                msg.includes('resource_exhausted') ||
+                msg.includes('overloaded') ||
+                msg.includes('rate limit') ||
+                msg.includes('quota');
+        };
+
+        let text: string;
+        let usedModel = PRIMARY_MODEL;
+
+        try {
+            // Try primary model: Gemini 3.1 Pro
+            const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
+            const result = await model.generateContent(contentParts);
+            const response = await result.response;
+            text = response.text();
+            console.log(`[Sonic] Used primary model: ${PRIMARY_MODEL}`);
+        } catch (primaryError) {
+            if (isOverloadError(primaryError)) {
+                // Fallback to Gemini 3 Pro
+                console.warn(`[Sonic] ${PRIMARY_MODEL} overloaded, falling back to ${FALLBACK_MODEL}`);
+                usedModel = FALLBACK_MODEL;
+                const fallbackModel = genAI.getGenerativeModel({ model: FALLBACK_MODEL });
+                const result = await fallbackModel.generateContent(contentParts);
+                const response = await result.response;
+                text = response.text();
+                console.log(`[Sonic] Used fallback model: ${FALLBACK_MODEL}`);
+            } else {
+                throw primaryError; // Re-throw non-overload errors
+            }
+        }
 
         // Parse JSON — strip any accidental markdown fences
         const cleanText = text
@@ -71,16 +108,44 @@ export async function analyzeMedia(formData: FormData) {
             .replace(/```/g, '')
             .trim();
 
+        let parsed;
         try {
-            return JSON.parse(cleanText);
+            parsed = JSON.parse(cleanText);
         } catch {
             console.error("JSON Parse Error. Raw text:", text);
             const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
+                parsed = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error("Failed to parse AI response as JSON.");
             }
-            throw new Error("Failed to parse AI response as JSON.");
         }
+
+        // Save to DB if user is authenticated
+        try {
+            const { userId } = await auth();
+            if (userId && parsed && !parsed.error) {
+                await db.diagnosisLog.create({
+                    data: {
+                        userId,
+                        machineCategory: category,
+                        makeModel,
+                        symptoms,
+                        diagnosisTitle: parsed.diagnosis_title || 'Unknown',
+                        severity: parsed.severity || 'Unknown',
+                        confidenceScore: parsed.confidence_score || 0,
+                        repairCost: parsed.cost_and_action || '',
+                        actionPlan: parsed.human_explanation || '',
+                    },
+                });
+                console.log(`[Sonic] Saved diagnosis for user ${userId}`);
+            }
+        } catch (dbError) {
+            // Don't fail the whole request if DB save fails
+            console.error("[Sonic] Failed to save diagnosis to DB:", dbError);
+        }
+
+        return parsed;
 
     } catch (error) {
         console.error("AI Error Details:", error);
@@ -91,5 +156,31 @@ export async function analyzeMedia(formData: FormData) {
         }
 
         return { error: errorMessage };
+    }
+}
+
+// ── Fetch user's saved diagnosis history from DB
+export async function getUserDiagnosisHistory() {
+    try {
+        const { userId } = await auth();
+        // If no user is logged in, return empty array silently
+        if (!userId) {
+            return [];
+        }
+
+        const history = await db.diagnosisLog.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        // Ensure serialization of dates to string for Client Components
+        return history.map(log => ({
+            ...log,
+            createdAt: log.createdAt.toISOString()
+        }));
+
+    } catch (error) {
+        console.error("[Sonic] Failed to fetch diagnosis history:", error);
+        return [];
     }
 }

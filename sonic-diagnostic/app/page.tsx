@@ -1,16 +1,18 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence, useAnimation } from 'framer-motion';
+import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
+import { motion, AnimatePresence, useAnimation, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import Image from 'next/image';
 import {
   Mic, Upload, FileText, X,
-  Home, Clock, MessageCircle, Settings,
+  Home, Clock, MessageCircle, Settings, Search,
   RefreshCcw, AlertTriangle, Wrench, FileAudio,
   ChevronDown, Globe, User, HelpCircle, Zap,
-  Send
+  Send, Volume2, VolumeX
 } from 'lucide-react';
-import { analyzeMedia } from './actions';
+import { analyzeMedia, getUserDiagnosisHistory } from './actions';
+import { useUser } from '@clerk/nextjs';
 
 /* ─────────────────────────── SPRING CONFIGS ─────────────────────────── */
 const springBouncy = { type: 'spring' as const, stiffness: 300, damping: 20 };
@@ -31,7 +33,11 @@ export default function SonicDiagnostic() {
   const [scannerState, setScannerState] = useState<ScannerState>('idle');
   const [showContextSheet, setShowContextSheet] = useState(false);
   const [showResults, setShowResults] = useState(false);
-  const [showChatBubble, setShowChatBubble] = useState(false);
+
+  // ── User Data
+  const { isLoaded, isSignedIn, user } = useUser();
+  const [diagnosisHistory, setDiagnosisHistory] = useState<any[]>([]);
+  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
 
   // ── Context
   const [category, setCategory] = useState('Auto');
@@ -47,10 +53,212 @@ export default function SonicDiagnostic() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ── Splash screen timer
+  // ── Elegant Logo Animation (splash) state
+  const [splashAnimated, setSplashAnimated] = useState(false);
+  const [splashFading, setSplashFading] = useState(false);
+  const [soundPlayed, setSoundPlayed] = useState(false);
+  const [showDiagnosticText, setShowDiagnosticText] = useState(false);
+  const [typedText, setTypedText] = useState('');
+  const splashAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const bgControls = useAnimation();
+  const chevronControls = useAnimation();
+  const dotControls = useAnimation();
+  const textControls = useAnimation();
+  const whiteCircleControls = useAnimation();
+
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const parallaxSpring = { damping: 30, stiffness: 100 };
+  const rotateX = useSpring(useTransform(mouseY, [-0.5, 0.5], [15, -15]), parallaxSpring);
+  const rotateY = useSpring(useTransform(mouseX, [-0.5, 0.5], [-15, 15]), parallaxSpring);
+
+  const sharpPath = 'M 30 60 L 50 25 L 50 25 L 70 60 L 58 60 L 50 46 L 50 46 L 42 60 Z';
+  const squarePath = 'M 30 60 L 49.2 26.4 L 50.8 26.4 L 70 60 L 58 60 L 50.8 47.4 L 49.2 47.4 L 42 60 Z';
+
+  const handleSplashMouseMove = (e: React.MouseEvent) => {
+    if (!splashAnimated) return;
+    const { clientX, clientY } = e;
+    const { innerWidth, innerHeight } = window;
+    mouseX.set(clientX / innerWidth - 0.5);
+    mouseY.set(clientY / innerHeight - 0.5);
+  };
+
+  // ── Typing effect for SONIC DIAGNOSTIC
   useEffect(() => {
-    const t = setTimeout(() => setShowSplash(false), 2800);
-    return () => clearTimeout(t);
+    if (showDiagnosticText) {
+      let i = 0;
+      const text = 'SONIC DIAGNOSTIC';
+      const interval = setInterval(() => {
+        setTypedText(text.slice(0, i + 1));
+        if (splashAudioCtxRef.current) {
+          const ctx = splashAudioCtxRef.current;
+          if (ctx.state === 'suspended') ctx.resume();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(4000, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1000, ctx.currentTime + 0.015);
+          gain.gain.setValueAtTime(0, ctx.currentTime);
+          gain.gain.linearRampToValueAtTime(0.03, ctx.currentTime + 0.002);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.02);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.02);
+        }
+        i++;
+        if (i >= text.length) clearInterval(interval);
+      }, 45);
+      return () => clearInterval(interval);
+    }
+  }, [showDiagnosticText]);
+
+  const playSplashSound = () => {
+    if (soundPlayed) return;
+    setSoundPlayed(true);
+    if (!splashAudioCtxRef.current) {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return;
+      splashAudioCtxRef.current = new AC();
+    }
+    const ctx = splashAudioCtxRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t = ctx.currentTime;
+    // Sub-bass swell
+    const subOsc = ctx.createOscillator();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(55, t);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0, t);
+    subGain.gain.linearRampToValueAtTime(0.3, t + 0.8);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 3.5);
+    subOsc.connect(subGain);
+    subGain.connect(ctx.destination);
+    subOsc.start(t);
+    subOsc.stop(t + 3.5);
+    // Glassy Chord (Amaj9)
+    [440.0, 554.37, 659.25, 830.61, 987.77].forEach((freq, index) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, t);
+      const attackTime = t + 0.1 + index * 0.08;
+      gain.gain.linearRampToValueAtTime(0.04, attackTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, attackTime + 2.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 3.5);
+    });
+    // Ping when dot lands
+    const pingTime = t + 0.9;
+    const pingOsc = ctx.createOscillator();
+    pingOsc.type = 'sine';
+    pingOsc.frequency.setValueAtTime(1760.0, pingTime);
+    const pingGain = ctx.createGain();
+    pingGain.gain.setValueAtTime(0, pingTime);
+    pingGain.gain.linearRampToValueAtTime(0.15, pingTime + 0.01);
+    pingGain.gain.exponentialRampToValueAtTime(0.001, pingTime + 1.5);
+    pingOsc.connect(pingGain);
+    pingGain.connect(ctx.destination);
+    pingOsc.start(pingTime);
+    pingOsc.stop(pingTime + 1.5);
+  };
+
+  // ── Fetch History ──
+  const fetchHistory = useCallback(async () => {
+    if (!isSignedIn) {
+      setDiagnosisHistory([]);
+      return;
+    }
+    setIsFetchingHistory(true);
+    try {
+      const history = await getUserDiagnosisHistory();
+      setDiagnosisHistory(history || []);
+    } catch (err) {
+      console.error('Error fetching history:', err);
+    } finally {
+      setIsFetchingHistory(false);
+    }
+  }, [isSignedIn]);
+
+  // Fetch on mount or when auth state changes
+  useEffect(() => {
+    if (isLoaded) {
+      fetchHistory();
+    }
+  }, [isLoaded, isSignedIn, fetchHistory]);
+
+  // Auto-trigger splash animation on mount
+  useEffect(() => {
+    const runSplash = async () => {
+      setSplashAnimated(true);
+      playSplashSound();
+      textControls.start({ opacity: 0, scale: 0.9, transition: { duration: 0.5 } });
+
+      // The white circle shrinks down to the dot, revealing the dark background
+      whiteCircleControls.start({
+        scale: 0,
+        transition: { duration: 1.2, ease: [0.4, 0, 0.2, 1] }
+      });
+
+      bgControls.start({ backgroundColor: '#0B1117', transition: { duration: 1.5, ease: [0.4, 0, 0.2, 1] } });
+      chevronControls.start({
+        d: squarePath,
+        y: 0,
+        scale: 1,
+        fill: '#00C2FF',
+        filter: 'drop-shadow(0px 0px 25px rgba(0, 194, 255, 0.8))',
+        transition: { duration: 1.2, ease: [0.34, 1.56, 0.64, 1] },
+      });
+      await dotControls.start({
+        y: [-40, 0],
+        scale: [0, 1.3, 1],
+        opacity: [0, 1, 1],
+        rx: [4, 4, 3.2],
+        filter: [
+          'drop-shadow(0px 0px 0px rgba(255, 255, 255, 0))',
+          'drop-shadow(0px 0px 40px rgba(255, 255, 255, 1))',
+          'drop-shadow(0px 0px 15px rgba(255, 255, 255, 0.8))',
+        ],
+        transition: { delay: 0.9, duration: 0.8, times: [0, 0.6, 1], ease: 'easeOut' },
+      });
+      setTimeout(() => setShowDiagnosticText(true), 150);
+      // Continuous floating
+      chevronControls.start({ y: [0, -6, 0], transition: { duration: 4, repeat: Infinity, ease: 'easeInOut' } });
+      dotControls.start({ y: [0, -3, 0], transition: { duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 0.2 } });
+      // Smooth fade-out then dismiss
+      setTimeout(() => setSplashFading(true), 3800);
+      setTimeout(() => setShowSplash(false), 4600);
+    };
+    runSplash();
+
+    // Browser audio unlocker - plays sound on first interaction if blocked on mount
+    const unlockAudio = () => {
+      if (splashAudioCtxRef.current) {
+        splashAudioCtxRef.current.resume().then(() => {
+          playSplashSound();
+        });
+      } else {
+        playSplashSound();
+      }
+      window.removeEventListener('mousedown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+    };
+
+    window.addEventListener('mousedown', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio);
+
+    return () => {
+      window.removeEventListener('mousedown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Recording logic (preserved from original)
@@ -81,7 +289,6 @@ export default function SonicDiagnostic() {
         setResult(diagnosis);
         setScannerState('idle');
         setShowResults(true);
-        setTimeout(() => setShowChatBubble(true), 1200);
       };
 
       mediaRecorder.start();
@@ -109,6 +316,15 @@ export default function SonicDiagnostic() {
     }
   }, [category, makeModel, symptoms]);
 
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setScannerState('idle');
+  }, []);
+
   // ── File upload handler (preserved logic)
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -132,167 +348,316 @@ export default function SonicDiagnostic() {
     setScannerState('idle');
     setUploadedFile(null);
     setShowResults(true);
-    setTimeout(() => setShowChatBubble(true), 1200);
   };
 
   // ── Reset
   const resetScan = () => {
     setShowResults(false);
-    setShowChatBubble(false);
     setResult(null);
     setUploadedFile(null);
     setScannerState('idle');
+    // Refresh history just in case they saved a new scan
+    fetchHistory();
   };
 
+  const isListening = scannerState === 'recording' || scannerState === 'processing';
+
   /* ═══════════════════════════════════════════════════════════
-     SPLASH SCREEN
+     SPLASH SCREEN — Elegant Logo Animation
      ═══════════════════════════════════════════════════════════ */
   if (showSplash) {
     return (
-      <div className="fixed inset-0 bg-[#05050a] flex items-center justify-center z-50">
-        {/* Ambient glow */}
-        <div className="absolute w-[400px] h-[400px] bg-[#00d4ff]/8 blur-[120px] rounded-full" />
-
+      <motion.div
+        className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden z-50 bg-[#0B1117]"
+        initial={{ opacity: 1 }}
+        animate={{ opacity: splashFading ? 0 : 1 }}
+        transition={{ opacity: { duration: 0.8, ease: 'easeInOut' } }}
+        onMouseMove={handleSplashMouseMove}
+      >
+        {/* The expanding/shrinking circle that acts as the initial soft background */}
         <motion.div
-          className="relative flex flex-col items-center"
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.9 }}
-          transition={springGentle}
-        >
-          {/* Logo container with the dot animation */}
-          <div className="relative w-28 h-28 mb-6">
-            <Image
-              src="/logo.png"
-              alt="Sonic Diagnostic"
-              width={112}
-              height={112}
-              className="relative z-10"
-              priority
-            />
-            {/* Animated "dot" — a white circle that separates and returns */}
-            <motion.div
-              className="absolute top-1/2 left-1/2 w-3 h-3 bg-white rounded-full z-20"
-              style={{ marginLeft: '-6px', marginTop: '-6px' }}
-              initial={{ x: 0, y: 0, opacity: 0 }}
-              animate={{
-                x: [0, 30, 25, 0],
-                y: [0, -20, -15, 0],
-                opacity: [0, 1, 1, 0.8, 0],
-                scale: [0.5, 1.2, 1, 0.8],
-              }}
-              transition={{
-                duration: 2.2,
-                times: [0, 0.3, 0.6, 1],
-                ease: [
-                  [0.34, 1.56, 0.64, 1],
-                  [0.25, 0.1, 0.25, 1],
-                  [0.68, -0.55, 0.27, 1.55],
-                ],
-              }}
-            />
-          </div>
+          className="absolute rounded-full bg-[#E0F7FF] pointer-events-none"
+          initial={{
+            scale: 30,
+            width: '100vmax',
+            height: '100vmax',
+            filter: 'blur(8px)'
+          }}
+          animate={whiteCircleControls}
+          style={{
+            transformOrigin: 'center center',
+            boxShadow: '0 0 100px 40px rgba(59, 130, 246, 0.3)',
+            top: '50%',
+            left: '50%',
+            x: '-50%',
+            y: 'calc(-50% + 22px)'
+          }}
+        />
 
-          <motion.p
-            className="text-white/40 text-xs tracking-[0.3em] uppercase font-medium"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5, ...springSmooth }}
-          >
-            Sonic Diagnostic
-          </motion.p>
+        {/* Radial glow */}
+        <motion.div
+          className="absolute inset-0 pointer-events-none"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: splashAnimated ? 1 : 0 }}
+          transition={{ duration: 2 }}
+          style={{ background: 'radial-gradient(circle at 50% 50%, rgba(0, 194, 255, 0.03) 0%, transparent 60%)' }}
+        />
 
-          {/* Fade out entire splash */}
+
+
+        {/* 3D Perspective wrapper */}
+        <div style={{ perspective: 1200 }} className="relative z-10 flex flex-col items-center">
           <motion.div
-            className="fixed inset-0 bg-[#05050a] pointer-events-none z-40"
+            style={{ rotateX, rotateY, transformStyle: 'preserve-3d' }}
+            className="relative flex items-center justify-center"
+          >
+            <svg viewBox="0 0 100 100" className="w-64 h-64 md:w-80 md:h-80 overflow-visible">
+              {/* Chevron */}
+              <motion.path
+                initial={{
+                  d: sharpPath,
+                  y: 20,
+                  scale: 0.95,
+                  fill: '#4285F4',
+                  filter: 'drop-shadow(0px 0px 0px rgba(0, 194, 255, 0))',
+                }}
+                animate={chevronControls}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                style={{ transformOrigin: '50% 50%' }}
+              />
+              {/* Dot */}
+              <motion.rect
+                x="46" y="68" width="8" height="8"
+                fill="#FFFFFF"
+                initial={{ opacity: 0, scale: 0, y: -20, rx: 4 }}
+                animate={dotControls}
+                style={{ transformOrigin: '50% 72px' }}
+              />
+            </svg>
+          </motion.div>
+
+          {/* Typed text */}
+          <div className="absolute -bottom-8 md:-bottom-12 h-6 flex items-center justify-center pointer-events-none">
+            <span className="font-sans text-[10px] md:text-xs font-semibold tracking-[0.4em] text-[#8A9BA8] uppercase">
+              {typedText}
+              {showDiagnosticText && typedText.length < 'SONIC DIAGNOSTIC'.length && (
+                <motion.span
+                  className="inline-block w-1.5 h-3 bg-[#8A9BA8] ml-1 align-middle"
+                  animate={{ opacity: [1, 0] }}
+                  transition={{ duration: 0.4, repeat: Infinity, repeatType: 'reverse' }}
+                />
+              )}
+            </span>
+          </div>
+        </div>
+
+
+      </motion.div>
+    );
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     RECORDING / LISTENING FULLSCREEN — Shazam style
+     ═══════════════════════════════════════════════════════════ */
+  if (isListening) {
+    return (
+      <div className="fixed inset-0 bg-[#061018] text-white overflow-hidden flex items-center justify-center">
+        <div className="app-container relative w-full h-full flex flex-col items-center justify-center">
+          {/* X close button — top left */}
+          <motion.button
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 2.3, duration: 0.5 }}
-          />
-        </motion.div>
+            transition={{ delay: 0.2 }}
+            onClick={stopRecording}
+            className="absolute top-12 left-6 z-20 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/15 transition-colors"
+          >
+            <X className="w-5 h-5 text-white/70" />
+          </motion.button>
+
+          {/* ── Concentric rings ── */}
+          <div className="relative flex items-center justify-center">
+            {/* Outermost expanding pulse rings */}
+            {scannerState === 'recording' && (
+              <>
+                {[0, 0.6, 1.2].map((delay, i) => (
+                  <motion.div
+                    key={`pulse-${i}`}
+                    className="absolute rounded-full border border-white/5"
+                    style={{ width: 200, height: 200 }}
+                    initial={{ scale: 1, opacity: 0.3 }}
+                    animate={{ scale: 3.5 + i * 0.3, opacity: 0 }}
+                    transition={{
+                      repeat: Infinity,
+                      duration: 3,
+                      delay,
+                      ease: 'easeOut',
+                    }}
+                  />
+                ))}
+              </>
+            )}
+
+            {/* Static concentric rings (Shazam gray gradient) */}
+            <motion.div
+              className="absolute rounded-full shazam-ring ring-recording-5"
+              animate={scannerState === 'recording' ? { scale: [1, 1.02, 1] } : {}}
+              transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
+            />
+            <motion.div
+              className="absolute rounded-full shazam-ring ring-recording-4"
+              animate={scannerState === 'recording' ? { scale: [1, 1.03, 1] } : {}}
+              transition={{ repeat: Infinity, duration: 2.5, ease: 'easeInOut', delay: 0.2 }}
+            />
+            <motion.div
+              className="absolute rounded-full shazam-ring ring-recording-3"
+              animate={scannerState === 'recording' ? { scale: [1, 1.04, 1] } : {}}
+              transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut', delay: 0.4 }}
+            />
+            <motion.div
+              className="absolute rounded-full shazam-ring ring-recording-2"
+              animate={scannerState === 'recording' ? { scale: [1, 1.05, 1] } : {}}
+              transition={{ repeat: Infinity, duration: 1.8, ease: 'easeInOut', delay: 0.3 }}
+            />
+            <motion.div
+              className="absolute rounded-full shazam-ring ring-recording-1"
+              animate={scannerState === 'recording' ? { scale: [1, 1.06, 1] } : {}}
+              transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut', delay: 0.1 }}
+            />
+
+            {/* ── Center circle with logo ── */}
+            <motion.div
+              className="relative z-10 w-[160px] h-[160px] rounded-full bg-[#1a2a38] flex items-center justify-center border border-white/10"
+              animate={scannerState === 'processing' ? { scale: [1, 0.95, 1] } : { scale: [1, 1.03, 1] }}
+              transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+            >
+              {scannerState === 'processing' ? (
+                <motion.div
+                  className="w-12 h-12 border-3 border-white/30 border-t-white rounded-full"
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                />
+              ) : (
+                <Image
+                  src="/logo.png"
+                  alt="Sonic"
+                  width={80}
+                  height={80}
+                  className="opacity-90"
+                />
+              )}
+            </motion.div>
+          </div>
+
+          {/* ── Equalizer dots ── */}
+          <motion.div
+            className="flex items-end gap-[6px] mt-10"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3 }}
+          >
+            <div className="eq-bar" />
+            <div className="eq-bar" />
+            <div className="eq-bar" />
+          </motion.div>
+
+          {/* ── Text ── */}
+          <motion.div
+            className="text-center mt-6"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4, ...springSmooth }}
+          >
+            <h2 className="text-xl font-bold text-white mb-2">
+              {scannerState === 'processing' ? 'Analiza AI...' : 'Nasłuchiwanie'}
+            </h2>
+            <p className="text-sm text-white/40 max-w-[280px] mx-auto">
+              {scannerState === 'processing'
+                ? 'Przetwarzanie nagrania. Proszę czekać.'
+                : 'Upewnij się, że urządzenie słyszy dźwięk wyraźnie'}
+            </p>
+            {scannerState === 'recording' && (
+              <motion.p
+                className="text-2xl font-bold text-white/80 mt-4 tabular-nums"
+                key={countdown}
+                initial={{ scale: 1.2, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                {countdown}s
+              </motion.p>
+            )}
+          </motion.div>
+        </div>
       </div>
     );
   }
 
   /* ═══════════════════════════════════════════════════════════
-     MAIN APP SHELL
+     MAIN APP SHELL — Shazam style
      ═══════════════════════════════════════════════════════════ */
   return (
-    <div className="fixed inset-0 bg-[#05050a] text-white overflow-hidden flex flex-col">
-      {/* ── Ambient background glows ── */}
-      <div className="fixed top-[-30%] left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-[#00d4ff]/6 blur-[180px] rounded-full pointer-events-none" />
-      <div className="fixed bottom-[-20%] right-[-10%] w-[400px] h-[400px] bg-[#6366f1]/5 blur-[150px] rounded-full pointer-events-none" />
+    <div className="fixed inset-0 bg-[#061018] text-white overflow-hidden flex flex-col items-center">
+      {/* ── Subtle ambient background glow ── */}
+      <div className="fixed top-[-40%] left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-[#0a2540]/30 blur-[200px] rounded-full pointer-events-none" />
 
-      {/* ── SCROLLABLE CONTENT AREA ── */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+      {/* ── APP CONTAINER (responsive) ── */}
+      <div className="app-container flex-1 overflow-y-auto overflow-x-hidden pb-24 relative w-full">
         <AnimatePresence mode="wait">
-          {/* ────────── HOME TAB ────────── */}
+          {/* ════════════════ HOME TAB ════════════════ */}
           {activeTab === 'home' && !showResults && (
             <motion.div
               key="home"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={springSmooth}
-              className="flex flex-col items-center min-h-full px-6 pt-14"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="flex flex-col items-center min-h-full px-6 pt-14 relative"
             >
-              {/* ── Top Alert Tooltip ── */}
-              <motion.div
+              {/* ── Settings gear top-right ── */}
+              <motion.button
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.2 }}
+                onClick={() => setActiveTab('settings')}
+                className="absolute top-14 right-6 w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+              >
+                <Settings className="w-5 h-5 text-white/40" />
+              </motion.button>
+
+              {/* ── "Tap to Scan" heading ── */}
+              <motion.h1
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2, ...springSmooth }}
-                className="glass-surface rounded-2xl px-5 py-3 mb-12 max-w-xs text-center"
+                transition={{ delay: 0.1, ...springSmooth }}
+                className="text-xl font-bold text-white mt-16 mb-12"
               >
-                <p className="text-[11px] text-white/50 leading-relaxed">
-                  <span className="text-[#00d4ff] font-semibold">Tip:</span> For best results, record
-                  <span className="text-white/70 font-medium"> 0.5m from the engine</span> &amp; add context.
-                </p>
-              </motion.div>
+                Dotknij aby Skanować
+              </motion.h1>
 
-              {/* ── CENTERPIECE: The Mic Button ── */}
-              <div className="relative flex items-center justify-center my-8">
-                {/* Concentric ripples during recording */}
-                {scannerState === 'recording' && (
-                  <>
-                    {[0, 0.4, 0.8, 1.2].map((delay, i) => (
-                      <motion.div
-                        key={i}
-                        className="absolute rounded-full border border-[#00d4ff]/30"
-                        style={{ width: 200, height: 200 }}
-                        initial={{ scale: 1, opacity: 0.6 }}
-                        animate={{ scale: 2.5 + i * 0.3, opacity: 0 }}
-                        transition={{
-                          repeat: Infinity,
-                          duration: 2.5,
-                          delay,
-                          ease: 'easeOut',
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
+              {/* ── Clerk Auth UI ── */}
+              <div className='mt-4 flex justify-center z-50 relative'>
+                <SignedOut>
+                  <SignInButton mode='modal'>
+                    <button className='bg-white/10 hover:bg-white/20 text-white border border-white/20 px-6 py-2 rounded-full text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md'>
+                      Zaloguj jako inżynier
+                    </button>
+                  </SignInButton>
+                </SignedOut>
+                <SignedIn>
+                  <div className='flex items-center gap-3 bg-black/50 border border-white/10 px-4 py-2 rounded-full backdrop-blur-md'>
+                    <span className='text-xs text-cyan-400 font-bold uppercase tracking-widest'>System Online</span>
+                    <UserButton afterSignOutUrl='/' />
+                  </div>
+                </SignedIn>
+              </div>
 
-                {/* Processing: spinning ring */}
-                {scannerState === 'processing' && (
-                  <motion.div
-                    className="absolute w-[220px] h-[220px] rounded-full border-2 border-transparent border-t-[#00d4ff] border-r-[#00d4ff]/30"
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
-                  />
-                )}
-
-                {/* Ambient glow behind button */}
-                <motion.div
-                  className="absolute w-[180px] h-[180px] rounded-full"
-                  animate={{
-                    boxShadow: scannerState === 'recording'
-                      ? '0 0 80px 20px rgba(0,212,255,0.25)'
-                      : scannerState === 'processing'
-                        ? '0 0 60px 15px rgba(0,212,255,0.15)'
-                        : '0 0 40px 10px rgba(0,212,255,0.08)',
-                  }}
-                  transition={{ duration: 1, ease: 'easeInOut' }}
-                />
+              {/* ── CENTERPIECE: Shazam-style ring button ── */}
+              <div className="relative flex items-center justify-center my-4">
+                {/* Outer rings (idle state) */}
+                <div className="absolute rounded-full shazam-ring ring-idle-3" />
+                <div className="absolute rounded-full shazam-ring ring-idle-2" />
+                <div className="absolute rounded-full shazam-ring ring-idle-1" />
 
                 {/* THE BUTTON */}
                 <motion.button
@@ -303,45 +668,16 @@ export default function SonicDiagnostic() {
                         ? analyzeUploadedFile
                         : undefined
                   }
-                  disabled={scannerState === 'recording' || scannerState === 'processing'}
-                  className={`relative z-10 w-[180px] h-[180px] rounded-full flex flex-col items-center justify-center transition-colors duration-500
-                    ${scannerState === 'recording'
-                      ? 'bg-[#00d4ff]/15 border-2 border-[#00d4ff]/60'
-                      : scannerState === 'fileReady'
-                        ? 'bg-[#10b981]/15 border-2 border-[#10b981]/60'
-                        : scannerState === 'processing'
-                          ? 'bg-white/5 border-2 border-white/10'
-                          : 'bg-white/5 border-2 border-white/10 hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5'
+                  className={`relative z-10 w-[180px] h-[180px] rounded-full flex flex-col items-center justify-center transition-all duration-300
+                    ${scannerState === 'fileReady'
+                      ? 'bg-[#10b981]/15 border-2 border-[#10b981]/40'
+                      : 'bg-[#1a2a38] border-2 border-white/8 hover:border-white/15'
                     }`}
-                  whileHover={scannerState === 'idle' ? { scale: 1.05 } : {}}
-                  whileTap={scannerState === 'idle' ? { scale: 0.95 } : {}}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
                   transition={springBouncy}
                 >
-                  {scannerState === 'processing' ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <motion.div
-                        className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full"
-                        animate={{ rotate: 360 }}
-                        transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }}
-                      />
-                      <span className="text-[10px] text-[#00d4ff] font-semibold tracking-[0.2em] uppercase">
-                        Analiza AI...
-                      </span>
-                    </div>
-                  ) : scannerState === 'recording' ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <motion.div
-                        animate={{ scale: [1, 1.15, 1] }}
-                        transition={{ repeat: Infinity, duration: 1.5 }}
-                      >
-                        <Mic className="w-10 h-10 text-[#00d4ff]" />
-                      </motion.div>
-                      <span className="text-2xl font-bold text-[#00d4ff] tabular-nums">{countdown}s</span>
-                      <span className="text-[9px] text-[#00d4ff]/60 font-medium tracking-[0.2em] uppercase">
-                        Nasłuchiwanie
-                      </span>
-                    </div>
-                  ) : scannerState === 'fileReady' ? (
+                  {scannerState === 'fileReady' ? (
                     <div className="flex flex-col items-center gap-2">
                       <Zap className="w-10 h-10 text-[#10b981]" />
                       <span className="text-[11px] text-[#10b981] font-bold tracking-[0.15em] uppercase">
@@ -349,12 +685,13 @@ export default function SonicDiagnostic() {
                       </span>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center gap-3">
-                      <Mic className="w-10 h-10 text-white/70" />
-                      <span className="text-[10px] text-white/40 font-medium tracking-[0.15em] uppercase">
-                        Dotknij
-                      </span>
-                    </div>
+                    <Image
+                      src="/logo.png"
+                      alt="Sonic"
+                      width={80}
+                      height={80}
+                      className="opacity-80"
+                    />
                   )}
                 </motion.button>
               </div>
@@ -365,7 +702,7 @@ export default function SonicDiagnostic() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3, ...springSmooth }}
-                  className="flex gap-3 mt-6"
+                  className="flex gap-3 mt-10"
                 >
                   <input
                     type="file"
@@ -378,16 +715,16 @@ export default function SonicDiagnostic() {
                     onClick={() => fileInputRef.current?.click()}
                     className="glass-surface rounded-full px-5 py-3 flex items-center gap-2 hover:bg-white/8 transition-all active:scale-95"
                   >
-                    <Upload className="w-4 h-4 text-[#00d4ff]" />
-                    <span className="text-xs text-white/70 font-medium">Upload Media</span>
+                    <Upload className="w-4 h-4 text-white/50" />
+                    <span className="text-xs text-white/60 font-medium">Upload</span>
                   </button>
 
                   <button
                     onClick={() => setShowContextSheet(true)}
                     className="glass-surface rounded-full px-5 py-3 flex items-center gap-2 hover:bg-white/8 transition-all active:scale-95"
                   >
-                    <FileText className="w-4 h-4 text-[#f59e0b]" />
-                    <span className="text-xs text-white/70 font-medium">Add Context</span>
+                    <FileText className="w-4 h-4 text-[#f59e0b]/70" />
+                    <span className="text-xs text-white/60 font-medium">Kontekst</span>
                   </button>
                 </motion.div>
               )}
@@ -407,31 +744,83 @@ export default function SonicDiagnostic() {
                 </motion.div>
               )}
 
-              {/* Bottom spacer for context info */}
-              {(category !== 'Auto' || makeModel || symptoms) && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mt-8 text-center"
-                >
-                  <p className="text-[10px] text-white/20 uppercase tracking-widest">Kontekst aktywny</p>
-                  <p className="text-[11px] text-white/40 mt-1">
-                    {category}{makeModel ? ` • ${makeModel}` : ''}{symptoms ? ' • Objawy ✓' : ''}
-                  </p>
-                </motion.div>
-              )}
+              {/* ── Recently Found / Recent Context  ── */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5, ...springSmooth }}
+                className="w-full mt-auto pt-12"
+              >
+                {(category !== 'Auto' || makeModel || symptoms) && (
+                  <div className="mb-6">
+                    <p className="text-xs text-white/30 font-semibold mb-3">Aktywny kontekst</p>
+                    <div className="glass-surface rounded-2xl p-4 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#f59e0b]/10 flex items-center justify-center">
+                        <Wrench className="w-5 h-5 text-[#f59e0b]" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white/80">{category}</p>
+                        <p className="text-[10px] text-white/30">
+                          {makeModel || 'Brak modelu'}{symptoms ? ' • Objawy ✓' : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs text-white/30 font-semibold mb-3">Ostatnie Skany</p>
+                {diagnosisHistory.length > 0 ? (
+                  <div className="glass-surface rounded-2xl p-4 flex justify-between items-center cursor-pointer hover:bg-white/5 transition-colors" onClick={() => setActiveTab('history')}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center 
+                        ${diagnosisHistory[0].severity === 'CRITICAL' ? 'bg-red-500/10' :
+                          diagnosisHistory[0].severity === 'SAFE' ? 'bg-green-500/10' : 'bg-amber-500/10'}`}>
+                        <FileAudio className={`w-6 h-6 
+                          ${diagnosisHistory[0].severity === 'CRITICAL' ? 'text-red-400' :
+                            diagnosisHistory[0].severity === 'SAFE' ? 'text-green-400' : 'text-amber-400'}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-white/80 font-semibold truncate">{diagnosisHistory[0].diagnosisTitle}</p>
+                        <p className="text-[10px] text-white/40">
+                          {new Date(diagnosisHistory[0].createdAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })} • {diagnosisHistory[0].confidenceScore}% pewności
+                        </p>
+                      </div>
+                    </div>
+                    {/* Shows count badge if multiple scans */}
+                    {diagnosisHistory.length > 1 && (
+                      <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-bold text-white/50">
+                        +{diagnosisHistory.length - 1}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="glass-surface rounded-2xl p-4 flex items-center gap-3 opacity-50">
+                    <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center">
+                      <FileAudio className="w-6 h-6 text-white/30" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-white/40">Brak zapisanych skanów</p>
+                      {isSignedIn ? (
+                        <p className="text-[10px] text-white/20">Dotknij Skanuj aby nagrać</p>
+                      ) : (
+                        <p className="text-[10px] text-[#00C2FF]/70">Zaloguj się aby zapisywać</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
             </motion.div>
           )}
 
-          {/* ────────── RESULTS VIEW ────────── */}
+          {/* ════════════════ RESULTS VIEW ════════════════ */}
           {activeTab === 'home' && showResults && result && (
             <motion.div
               key="results"
-              initial={{ opacity: 0, x: 100 }}
+              initial={{ opacity: 0, x: 60 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -100 }}
+              exit={{ opacity: 0, x: -60 }}
               transition={springSmooth}
-              className="px-5 pt-12 pb-8 space-y-4"
+              className="px-5 pt-14 pb-8 space-y-4"
             >
               {result.error ? (
                 <div className="glass-surface rounded-2xl p-8 text-center">
@@ -446,7 +835,7 @@ export default function SonicDiagnostic() {
                 </div>
               ) : (
                 <>
-                  {/* ── Header ── */}
+                  {/* Header */}
                   <motion.div
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -459,7 +848,7 @@ export default function SonicDiagnostic() {
                     </button>
                   </motion.div>
 
-                  {/* ── BENTO: Main diagnosis ── */}
+                  {/* ── Main diagnosis card ── */}
                   <motion.div
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -478,7 +867,7 @@ export default function SonicDiagnostic() {
                       >
                         {result.severity}
                       </span>
-                      <span className="text-[#00d4ff] text-xs font-semibold">
+                      <span className="text-white/50 text-xs font-semibold">
                         {result.confidence_score}% pewności
                       </span>
                     </div>
@@ -490,7 +879,7 @@ export default function SonicDiagnostic() {
                     </p>
                   </motion.div>
 
-                  {/* ── BENTO: 2-column grid ── */}
+                  {/* ── 2-column grid ── */}
                   <div className="grid grid-cols-2 gap-3">
                     <motion.div
                       initial={{ opacity: 0, y: 15 }}
@@ -510,26 +899,24 @@ export default function SonicDiagnostic() {
                       initial={{ opacity: 0, y: 15 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3, ...springSmooth }}
-                      className="glass-surface rounded-2xl p-4 border-[#00d4ff]/10"
-                      style={{ borderColor: 'rgba(0,212,255,0.1)' }}
+                      className="glass-surface rounded-2xl p-4"
                     >
-                      <p className="text-[10px] text-[#00d4ff]/60 uppercase tracking-wider mb-2">
+                      <p className="text-[10px] text-white/40 uppercase tracking-wider mb-2">
                         Koszt
                       </p>
-                      <p className="text-base font-bold text-[#00d4ff]">
+                      <p className="text-base font-bold text-white/80">
                         {result.cost_and_action?.match(/[\d,.]+\s*(?:PLN|zł)/i)?.[0] || '—'}
                       </p>
-                      <p className="text-[10px] text-white/30 mt-1">szacunkowo</p>
+                      <p className="text-[10px] text-white/20 mt-1">szacunkowo</p>
                     </motion.div>
                   </div>
 
-                  {/* ── BENTO: Recommendation ── */}
+                  {/* ── Recommendation ── */}
                   <motion.div
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.35, ...springSmooth }}
                     className="glass-surface rounded-2xl p-5"
-                    style={{ borderColor: 'rgba(245,158,11,0.12)' }}
                   >
                     <p className="text-[10px] text-[#f59e0b]/70 uppercase font-semibold mb-2 flex items-center gap-2 tracking-wider">
                       <Wrench className="w-3.5 h-3.5" /> Rekomendacja
@@ -551,7 +938,7 @@ export default function SonicDiagnostic() {
                       <span className="text-xs font-semibold text-white/70">AI Mechanik Online</span>
                     </div>
                     <div className="p-4 space-y-3 max-h-40 overflow-y-auto">
-                      <div className="bg-[#00d4ff]/8 border border-[#00d4ff]/10 text-white/70 p-3 rounded-2xl rounded-tl-sm text-sm max-w-[85%] leading-relaxed">
+                      <div className="bg-white/5 border border-white/5 text-white/70 p-3 rounded-2xl rounded-tl-sm text-sm max-w-[85%] leading-relaxed">
                         {result.chat_opener || 'Słyszę ten problem. W czym mogę pomóc?'}
                       </div>
                     </div>
@@ -559,9 +946,9 @@ export default function SonicDiagnostic() {
                       <input
                         type="text"
                         placeholder="Zapytaj mechanika..."
-                        className="flex-1 bg-white/5 text-sm text-white/70 p-2.5 rounded-xl border border-white/5 outline-none focus:border-[#00d4ff]/30 transition-colors placeholder:text-white/20"
+                        className="flex-1 bg-white/5 text-sm text-white/70 p-2.5 rounded-xl border border-white/5 outline-none focus:border-white/15 transition-colors placeholder:text-white/20"
                       />
-                      <button className="bg-[#00d4ff]/10 text-[#00d4ff] px-4 rounded-xl hover:bg-[#00d4ff]/20 transition-colors">
+                      <button className="bg-white/10 text-white/60 px-4 rounded-xl hover:bg-white/15 transition-colors">
                         <Send className="w-4 h-4" />
                       </button>
                     </div>
@@ -582,7 +969,7 @@ export default function SonicDiagnostic() {
             </motion.div>
           )}
 
-          {/* ────────── HISTORY TAB ────────── */}
+          {/* ════════════════ HISTORY TAB ════════════════ */}
           {activeTab === 'history' && (
             <motion.div
               key="history"
@@ -592,36 +979,74 @@ export default function SonicDiagnostic() {
               transition={springSmooth}
               className="px-6 pt-14"
             >
-              <h2 className="text-xl font-bold text-white/90 mb-6">Historia</h2>
+              <h2 className="text-xl font-bold text-white/90 mb-6 flex items-center gap-3">
+                Historia Diagnoz
+                {isFetchingHistory && <RefreshCcw className="w-4 h-4 text-white/30 animate-spin" />}
+              </h2>
 
               <div className="space-y-3">
-                {[
-                  { title: 'Stuk korbowodowy', severity: 'CRITICAL', date: '2 godz. temu', score: 92 },
-                  { title: 'Łożysko alternatora', severity: 'MEDIUM', date: 'Wczoraj', score: 78 },
-                  { title: 'Normalny dźwięk silnika', severity: 'SAFE', date: '3 dni temu', score: 95 },
-                ].map((item, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.1, ...springSmooth }}
-                    className="glass-surface rounded-2xl p-4 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center
-                        ${item.severity === 'CRITICAL' ? 'bg-red-500/10' : item.severity === 'SAFE' ? 'bg-green-500/10' : 'bg-amber-500/10'}`}
-                      >
-                        <FileAudio className={`w-5 h-5 ${item.severity === 'CRITICAL' ? 'text-red-400' : item.severity === 'SAFE' ? 'text-green-400' : 'text-amber-400'}`} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-white/80">{item.title}</p>
-                        <p className="text-[10px] text-white/30">{item.date} • {item.score}% pewności</p>
-                      </div>
+                {!isSignedIn ? (
+                  <div className="glass-surface rounded-2xl p-8 flex justify-center text-center">
+                    <div className="space-y-4">
+                      <FileAudio className="w-12 h-12 text-white/20 mx-auto" />
+                      <p className="text-sm text-white/50">Zaloguj się, aby zapisywać i przeglądać historię swoich diagnoz.</p>
+                      <SignInButton mode="modal">
+                        <button className="bg-white/10 text-white border border-white/20 px-6 py-2.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition-all">
+                          Zaloguj się
+                        </button>
+                      </SignInButton>
                     </div>
-                    <ChevronDown className="w-4 h-4 text-white/20 -rotate-90" />
-                  </motion.div>
-                ))}
+                  </div>
+                ) : isFetchingHistory && diagnosisHistory.length === 0 ? (
+                  <div className="flex justify-center py-10">
+                    <RefreshCcw className="w-6 h-6 text-white/20 animate-spin" />
+                  </div>
+                ) : diagnosisHistory.length === 0 ? (
+                  <div className="glass-surface rounded-2xl p-8 text-center opacity-60">
+                    <p className="text-sm text-white/50 mb-1">Twoja historia jest pusta.</p>
+                    <p className="text-xs text-white/30">Wszystkie nowe, zapisane skany pojawią się tutaj.</p>
+                  </div>
+                ) : (
+                  diagnosisHistory.map((item, i) => (
+                    <motion.div
+                      key={item.id || i}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i * 0.05, 0.4), ...springSmooth }}
+                      className="glass-surface rounded-2xl p-4 flex flex-col gap-3 group"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0
+                          ${item.severity === 'CRITICAL' ? 'bg-red-500/10' : item.severity === 'SAFE' ? 'bg-green-500/10' : 'bg-amber-500/10'}`}
+                          >
+                            <FileAudio className={`w-5 h-5 ${item.severity === 'CRITICAL' ? 'text-red-400' : item.severity === 'SAFE' ? 'text-green-400' : 'text-amber-400'}`} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-white/80 line-clamp-1">{item.diagnosisTitle}</p>
+                            <p className="text-[10px] text-white/40 mt-0.5">
+                              {new Date(item.createdAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                              {' '}• {item.machineCategory} {item.makeModel ? `(${item.makeModel})` : ''}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-md shrink-0 ml-3
+                          ${item.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400' : item.severity === 'SAFE' ? 'bg-green-500/20 text-green-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                          {item.confidenceScore}%
+                        </span>
+                      </div>
+
+                      {/* Expanded View Preview (Always visible in this card design for readiblity) */}
+                      <div className="mt-2 bg-black/20 p-3 rounded-xl border border-white/5">
+                        <p className="text-xs text-white/60 line-clamp-2 leading-relaxed">{item.actionPlan}</p>
+                        {item.repairCost && (
+                          <p className="text-[10px] text-[#f59e0b]/80 mt-2 font-medium">Koszt: {item.repairCost}</p>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))
+                )}
               </div>
 
               <div className="mt-8 text-center">
@@ -630,7 +1055,7 @@ export default function SonicDiagnostic() {
             </motion.div>
           )}
 
-          {/* ────────── CHAT TAB ────────── */}
+          {/* ════════════════ CHAT TAB ════════════════ */}
           {activeTab === 'chat' && (
             <motion.div
               key="chat"
@@ -650,8 +1075,8 @@ export default function SonicDiagnostic() {
                   transition={{ delay: 0.1, ...springSmooth }}
                   className="flex gap-3 items-start max-w-[85%]"
                 >
-                  <div className="w-8 h-8 rounded-full bg-[#00d4ff]/10 flex items-center justify-center flex-shrink-0 mt-1">
-                    <Wrench className="w-4 h-4 text-[#00d4ff]" />
+                  <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
+                    <Wrench className="w-4 h-4 text-white/60" />
                   </div>
                   <div className="bg-white/5 border border-white/5 p-3.5 rounded-2xl rounded-tl-sm">
                     <p className="text-sm text-white/60 leading-relaxed">
@@ -667,7 +1092,7 @@ export default function SonicDiagnostic() {
                   transition={{ delay: 0.2, ...springSmooth }}
                   className="flex justify-end"
                 >
-                  <div className="bg-[#00d4ff]/10 border border-[#00d4ff]/10 p-3.5 rounded-2xl rounded-tr-sm max-w-[75%]">
+                  <div className="bg-white/8 border border-white/5 p-3.5 rounded-2xl rounded-tr-sm max-w-[75%]">
                     <p className="text-sm text-white/70 leading-relaxed">
                       Silnik stuka na zimnym — co to może być?
                     </p>
@@ -681,8 +1106,8 @@ export default function SonicDiagnostic() {
                   transition={{ delay: 0.3, ...springSmooth }}
                   className="flex gap-3 items-start max-w-[85%]"
                 >
-                  <div className="w-8 h-8 rounded-full bg-[#00d4ff]/10 flex items-center justify-center flex-shrink-0 mt-1">
-                    <Wrench className="w-4 h-4 text-[#00d4ff]" />
+                  <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
+                    <Wrench className="w-4 h-4 text-white/60" />
                   </div>
                   <div className="bg-white/5 border border-white/5 p-3.5 rounded-2xl rounded-tl-sm">
                     <p className="text-sm text-white/60 leading-relaxed">
@@ -699,14 +1124,14 @@ export default function SonicDiagnostic() {
                   placeholder="Napisz wiadomość..."
                   className="flex-1 bg-transparent text-sm text-white/70 p-2 outline-none placeholder:text-white/20"
                 />
-                <button className="bg-[#00d4ff]/10 text-[#00d4ff] px-4 rounded-xl hover:bg-[#00d4ff]/20 transition-colors">
+                <button className="bg-white/10 text-white/60 px-4 rounded-xl hover:bg-white/15 transition-colors">
                   <Send className="w-4 h-4" />
                 </button>
               </div>
             </motion.div>
           )}
 
-          {/* ────────── SETTINGS TAB ────────── */}
+          {/* ════════════════ SETTINGS TAB ════════════════ */}
           {activeTab === 'settings' && (
             <motion.div
               key="settings"
@@ -722,8 +1147,8 @@ export default function SonicDiagnostic() {
                 {/* Language */}
                 <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[#6366f1]/10 flex items-center justify-center">
-                      <Globe className="w-5 h-5 text-[#6366f1]" />
+                    <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center">
+                      <Globe className="w-5 h-5 text-white/50" />
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-white/80">Język</p>
@@ -731,7 +1156,7 @@ export default function SonicDiagnostic() {
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <span className="px-2.5 py-1 rounded-lg bg-[#00d4ff]/10 text-[#00d4ff] text-xs font-bold">PL</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-white/10 text-white/70 text-xs font-bold">PL</span>
                     <span className="px-2.5 py-1 rounded-lg bg-white/5 text-white/30 text-xs font-medium">EN</span>
                   </div>
                 </div>
@@ -739,8 +1164,8 @@ export default function SonicDiagnostic() {
                 {/* Account */}
                 <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[#10b981]/10 flex items-center justify-center">
-                      <User className="w-5 h-5 text-[#10b981]" />
+                    <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center">
+                      <User className="w-5 h-5 text-white/50" />
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-white/80">Konto</p>
@@ -753,8 +1178,8 @@ export default function SonicDiagnostic() {
                 {/* Support */}
                 <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[#f59e0b]/10 flex items-center justify-center">
-                      <HelpCircle className="w-5 h-5 text-[#f59e0b]" />
+                    <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center">
+                      <HelpCircle className="w-5 h-5 text-white/50" />
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-white/80">Wsparcie</p>
@@ -773,35 +1198,6 @@ export default function SonicDiagnostic() {
           )}
         </AnimatePresence>
       </div>
-
-      {/* ═══════════════════════════════════════════════════════════
-         FLOATING CHAT NOTIFICATION BUBBLE
-         ═══════════════════════════════════════════════════════════ */}
-      <AnimatePresence>
-        {showChatBubble && showResults && result && !result.error && (
-          <motion.div
-            initial={{ opacity: 0, y: 30, scale: 0.8 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.9 }}
-            transition={springBouncy}
-            className="fixed bottom-28 right-5 z-30"
-          >
-            <button
-              onClick={() => setShowChatBubble(false)}
-              className="glass-surface-strong rounded-2xl p-4 max-w-[260px] shadow-2xl shadow-black/50 text-left group"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
-                <span className="text-[10px] font-semibold text-white/50 uppercase tracking-wider">AI Mechanik</span>
-                <X className="w-3 h-3 text-white/20 ml-auto group-hover:text-white/40" />
-              </div>
-              <p className="text-xs text-white/60 leading-relaxed line-clamp-2">
-                {result.chat_opener || 'Mam pytanie do wyników diagnostyki...'}
-              </p>
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* ═══════════════════════════════════════════════════════════
          CONTEXT BOTTOM SHEET
@@ -841,7 +1237,7 @@ export default function SonicDiagnostic() {
                     onClick={() => setCategory(cat)}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-medium transition-all
                       ${category === cat
-                        ? 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30'
+                        ? 'bg-white/10 text-white/80 border border-white/20'
                         : 'bg-white/5 border border-white/5 text-white/40 hover:bg-white/8'
                       }`}
                   >
@@ -859,7 +1255,7 @@ export default function SonicDiagnostic() {
                 placeholder="np. BMW E46 / Bosch WAN28..."
                 value={makeModel}
                 onChange={(e) => setMakeModel(e.target.value)}
-                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 mb-5 focus:border-[#00d4ff]/30 outline-none transition-colors placeholder:text-white/15"
+                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 mb-5 focus:border-white/15 outline-none transition-colors placeholder:text-white/15"
               />
 
               {/* Symptoms */}
@@ -870,13 +1266,13 @@ export default function SonicDiagnostic() {
                 placeholder="np. stuka na zimnym silniku, grzechocze przy 2000 obr..."
                 value={symptoms}
                 onChange={(e) => setSymptoms(e.target.value)}
-                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 h-28 focus:border-[#00d4ff]/30 outline-none resize-none transition-colors placeholder:text-white/15"
+                className="w-full bg-white/5 border border-white/5 rounded-xl p-3.5 text-sm text-white/80 h-28 focus:border-white/15 outline-none resize-none transition-colors placeholder:text-white/15"
               />
 
               {/* Save button */}
               <button
                 onClick={() => setShowContextSheet(false)}
-                className="w-full mt-6 bg-[#00d4ff]/15 border border-[#00d4ff]/20 text-[#00d4ff] font-semibold py-3.5 rounded-2xl hover:bg-[#00d4ff]/25 transition-all active:scale-[0.98]"
+                className="w-full mt-6 bg-white/10 border border-white/15 text-white/80 font-semibold py-3.5 rounded-2xl hover:bg-white/15 transition-all active:scale-[0.98]"
               >
                 Zapisz Kontekst
               </button>
@@ -886,20 +1282,20 @@ export default function SonicDiagnostic() {
       </AnimatePresence>
 
       {/* ═══════════════════════════════════════════════════════════
-         BOTTOM NAVIGATION BAR
+         BOTTOM NAVIGATION BAR — Shazam style
          ═══════════════════════════════════════════════════════════ */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 safe-bottom">
+      <div className="fixed bottom-0 left-0 right-0 z-30 safe-bottom flex justify-center pb-2">
         <motion.nav
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.3, ...springBouncy }}
-          className="glass-surface-strong rounded-full px-2 py-2 flex items-center gap-1"
+          className="glass-surface-strong rounded-[28px] px-2 py-2 flex items-center gap-0 mx-4 max-w-[420px] w-full"
         >
           {([
             { id: 'home' as TabId, icon: Home, label: 'Skaner' },
             { id: 'history' as TabId, icon: Clock, label: 'Historia' },
             { id: 'chat' as TabId, icon: MessageCircle, label: 'Czat' },
-            { id: 'settings' as TabId, icon: Settings, label: 'Ustawienia' },
+            { id: 'settings' as TabId, icon: Search, label: 'Szukaj' },
           ]).map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -909,19 +1305,18 @@ export default function SonicDiagnostic() {
                   setActiveTab(tab.id);
                   if (tab.id !== 'home') {
                     setShowResults(false);
-                    setShowChatBubble(false);
                   }
                 }}
-                className={`relative flex flex-col items-center gap-0.5 px-5 py-2 rounded-full transition-all duration-300
+                className={`relative flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-[22px] transition-all duration-300
                   ${isActive ? 'bg-white/10' : 'hover:bg-white/5'}`}
               >
                 <tab.icon
                   className={`w-5 h-5 transition-colors duration-300
-                    ${isActive ? 'text-[#00d4ff]' : 'text-white/30'}`}
+                    ${isActive ? 'text-white' : 'text-white/30'}`}
                 />
                 <span
                   className={`text-[9px] font-medium transition-colors duration-300
-                    ${isActive ? 'text-[#00d4ff]' : 'text-white/20'}`}
+                    ${isActive ? 'text-white' : 'text-white/20'}`}
                 >
                   {tab.label}
                 </span>

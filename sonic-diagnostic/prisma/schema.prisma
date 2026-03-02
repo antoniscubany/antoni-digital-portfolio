@@ -1,0 +1,27 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model DiagnosisLog {
+  id              String   @id @default(uuid())
+  userId          String
+  machineCategory String
+  makeModel       String
+  symptoms        String
+  diagnosisTitle  String
+  severity        String
+  confidenceScore Int
+  repairCost      String
+  actionPlan      String   @db.Text
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+}

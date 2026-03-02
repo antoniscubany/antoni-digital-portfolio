@@ -2,7 +2,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #05050a;
+  --background: #061018;
   --foreground: #e5e5e5;
   --cyan: #00d4ff;
   --amber: #f59e0b;
@@ -13,6 +13,11 @@
   --border: rgba(255, 255, 255, 0.08);
   --glass: rgba(255, 255, 255, 0.05);
   --glass-border: rgba(255, 255, 255, 0.1);
+  --ring-1: #1a2a38;
+  --ring-2: #253545;
+  --ring-3: #354555;
+  --ring-4: #506070;
+  --ring-5: #708090;
 }
 
 @theme inline {
@@ -61,7 +66,72 @@ body {
   border-radius: 4px;
 }
 
-/* ── Ripple animations ── */
+/* ═══════════════════════════════════════
+   SHAZAM CONCENTRIC RING PULSE
+   ═══════════════════════════════════════ */
+@keyframes ring-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+}
+
+@keyframes ring-expand {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* ── Equalizer dots ── */
+@keyframes eq-bounce {
+
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.eq-bar {
+  width: 4px;
+  height: 20px;
+  background: white;
+  border-radius: 2px;
+  animation: eq-bounce 0.6s ease-in-out infinite;
+}
+
+.eq-bar:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.eq-bar:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.eq-bar:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* ── General animations ── */
 @keyframes ripple-expand {
   0% {
     transform: scale(1);
@@ -70,18 +140,6 @@ body {
 
   100% {
     transform: scale(2.8);
-    opacity: 0;
-  }
-}
-
-@keyframes ripple-expand-slow {
-  0% {
-    transform: scale(1);
-    opacity: 0.4;
-  }
-
-  100% {
-    transform: scale(3.5);
     opacity: 0;
   }
 }
@@ -107,16 +165,6 @@ body {
 
   50% {
     box-shadow: 0 0 40px rgba(0, 212, 255, 0.3);
-  }
-}
-
-@keyframes scan-sweep {
-  0% {
-    transform: rotate(0deg);
-  }
-
-  100% {
-    transform: rotate(360deg);
   }
 }
 
@@ -146,20 +194,12 @@ body {
   animation: ripple-expand 2s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
-.animate-ripple-slow {
-  animation: ripple-expand-slow 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
 .animate-float {
   animation: float-gentle 3s ease-in-out infinite;
 }
 
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.animate-scan-sweep {
-  animation: scan-sweep 4s linear infinite;
 }
 
 .animate-fade-in-up {
@@ -172,7 +212,9 @@ body {
   animation: shimmer 2s ease-in-out infinite;
 }
 
-/* ── Glass surface utility ── */
+/* ═══════════════════════════════════════
+   GLASS SURFACES (Shazam-tuned)
+   ═══════════════════════════════════════ */
 .glass-surface {
   background: rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(40px);
@@ -187,7 +229,92 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+/* ═══════════════════════════════════════
+   RESPONSIVE DESKTOP WRAPPER
+   ═══════════════════════════════════════ */
+.app-container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* Tablet & small desktop */
+@media (min-width: 768px) {
+  .app-container {
+    max-width: 480px;
+  }
+}
+
+/* Large desktop — phone-like centered frame */
+@media (min-width: 1200px) {
+  .app-container {
+    max-width: 430px;
+  }
+}
+
 /* ── Safe area padding for mobile ── */
 .safe-bottom {
   padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+}
+
+/* ═══════════════════════════════════════
+   SHAZAM RING SYSTEM
+   ═══════════════════════════════════════ */
+.shazam-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid;
+  pointer-events: none;
+}
+
+.ring-idle-1 {
+  width: 220px;
+  height: 220px;
+  border-color: rgba(40, 60, 80, 0.6);
+}
+
+.ring-idle-2 {
+  width: 300px;
+  height: 300px;
+  border-color: rgba(35, 50, 65, 0.4);
+}
+
+.ring-idle-3 {
+  width: 380px;
+  height: 380px;
+  border-color: rgba(30, 45, 55, 0.25);
+}
+
+/* Recording ring glow layers */
+.ring-recording-1 {
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(80, 96, 112, 0.4) 0%, rgba(60, 75, 90, 0.2) 60%, transparent 100%);
+  border-color: rgba(100, 120, 140, 0.5);
+}
+
+.ring-recording-2 {
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(60, 75, 90, 0.25) 0%, rgba(45, 60, 75, 0.1) 70%, transparent 100%);
+  border-color: rgba(80, 100, 120, 0.35);
+}
+
+.ring-recording-3 {
+  width: 380px;
+  height: 380px;
+  background: radial-gradient(circle, rgba(45, 60, 70, 0.15) 0%, rgba(30, 45, 55, 0.05) 80%, transparent 100%);
+  border-color: rgba(60, 80, 95, 0.2);
+}
+
+.ring-recording-4 {
+  width: 460px;
+  height: 460px;
+  border-color: rgba(40, 55, 70, 0.12);
+}
+
+.ring-recording-5 {
+  width: 540px;
+  height: 540px;
+  border-color: rgba(30, 45, 55, 0.06);
 }

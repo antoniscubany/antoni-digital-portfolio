@@ -11,7 +11,7 @@ import {
   ChevronDown, Globe, User, HelpCircle, Zap,
   Send, Volume2, VolumeX
 } from 'lucide-react';
-import { analyzeMedia, getUserDiagnosisHistory } from './actions';
+import { analyzeMedia, getUserDiagnosisHistory, getUserCredits } from './actions';
 import { useUser } from '@clerk/nextjs';
 
 /* ─────────────────────────── SPRING CONFIGS ─────────────────────────── */
@@ -38,6 +38,8 @@ export default function SonicDiagnostic() {
   const { isLoaded, isSignedIn, user } = useUser();
   const [diagnosisHistory, setDiagnosisHistory] = useState<any[]>([]);
   const [isFetchingHistory, setIsFetchingHistory] = useState(false);
+  const [credits, setCredits] = useState<number | null>(null);
+  const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
 
   // ── Context
   const [category, setCategory] = useState('Auto');
@@ -167,18 +169,23 @@ export default function SonicDiagnostic() {
     pingOsc.stop(pingTime + 1.5);
   };
 
-  // ── Fetch History ──
-  const fetchHistory = useCallback(async () => {
+  // ── Fetch History & Credits ──
+  const fetchUserData = useCallback(async () => {
     if (!isSignedIn) {
       setDiagnosisHistory([]);
+      setCredits(null);
       return;
     }
     setIsFetchingHistory(true);
     try {
-      const history = await getUserDiagnosisHistory();
+      const [history, userCredits] = await Promise.all([
+        getUserDiagnosisHistory(),
+        getUserCredits()
+      ]);
       setDiagnosisHistory(history || []);
+      setCredits(userCredits);
     } catch (err) {
-      console.error('Error fetching history:', err);
+      console.error('Error fetching user data:', err);
     } finally {
       setIsFetchingHistory(false);
     }
@@ -187,9 +194,30 @@ export default function SonicDiagnostic() {
   // Fetch on mount or when auth state changes
   useEffect(() => {
     if (isLoaded) {
-      fetchHistory();
+      fetchUserData();
     }
-  }, [isLoaded, isSignedIn, fetchHistory]);
+  }, [isLoaded, isSignedIn, fetchUserData]);
+
+  // Checkout Handler
+  const handleBuyCredits = async (packageId: '5_credits' | '15_credits') => {
+    try {
+      setIsRedirectingToStripe(true);
+      const res = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packageId })
+      });
+
+      if (!res.ok) throw new Error("Checkout failed");
+
+      const { url } = await res.json();
+      window.location.href = url; // Redirect to Stripe
+    } catch (error) {
+      console.error(error);
+      alert("Wystąpił błąd płatności. Spróbuj powonie.");
+      setIsRedirectingToStripe(false);
+    }
+  };
 
   // Auto-trigger splash animation on mount
   useEffect(() => {
@@ -263,6 +291,12 @@ export default function SonicDiagnostic() {
 
   // ── Recording logic (preserved from original)
   const startRecording = useCallback(async () => {
+
+    if (credits !== null && credits < 1) {
+      alert("Brak kredytów. Przejdź do 'Szukaj / Konto', aby odblokować skanowanie.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -336,6 +370,12 @@ export default function SonicDiagnostic() {
   // ── Analyze uploaded file
   const analyzeUploadedFile = async () => {
     if (!uploadedFile) return;
+
+    if (credits !== null && credits < 1) {
+      alert("Brak kredytów. Przejdź do 'Konto', aby odblokować skanowanie.");
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', uploadedFile);
     formData.append('category', category);
@@ -356,8 +396,8 @@ export default function SonicDiagnostic() {
     setResult(null);
     setUploadedFile(null);
     setScannerState('idle');
-    // Refresh history just in case they saved a new scan
-    fetchHistory();
+    // Refresh history just in case they saved a new scan and burned a credit
+    fetchUserData();
   };
 
   const isListening = scannerState === 'recording' || scannerState === 'processing';
@@ -636,7 +676,7 @@ export default function SonicDiagnostic() {
               </motion.h1>
 
               {/* ── Clerk Auth UI ── */}
-              <div className='mt-4 flex justify-center z-50 relative'>
+              <div className='mt-4 flex flex-col items-center justify-center gap-2 z-50 relative'>
                 <SignedOut>
                   <SignInButton mode='modal'>
                     <button className='bg-white/10 hover:bg-white/20 text-white border border-white/20 px-6 py-2 rounded-full text-xs font-bold tracking-widest uppercase transition-all backdrop-blur-md'>
@@ -649,6 +689,12 @@ export default function SonicDiagnostic() {
                     <span className='text-xs text-cyan-400 font-bold uppercase tracking-widest'>System Online</span>
                     <UserButton afterSignOutUrl='/' />
                   </div>
+                  {credits !== null && (
+                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 border border-white/5 shadow-inner backdrop-blur-md">
+                      <Zap className="w-3 h-3 text-[#f59e0b]" />
+                      <span className="text-[10px] text-white/70 font-bold tracking-wider">{credits} KREDYTÓW</span>
+                    </div>
+                  )}
                 </SignedIn>
               </div>
 
@@ -1161,7 +1207,56 @@ export default function SonicDiagnostic() {
                   </div>
                 </div>
 
-                {/* Account */}
+                {/* Credits / Upgrade Block */}
+                <div className="glass-surface-strong rounded-2xl p-6 relative overflow-hidden mt-6 mb-2 border border-[#f59e0b]/20">
+                  <div className="absolute -top-10 -right-10 w-24 h-24 bg-[#f59e0b]/20 blur-2xl rounded-full pointer-events-none" />
+
+                  <h3 className="text-lg font-bold text-white/90 mb-1 flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-[#f59e0b]" />
+                    Pakiety Skanów
+                  </h3>
+                  <p className="text-xs text-white/50 mb-5 leading-relaxed">
+                    Twój wirtualny warsztat potrzebuje zasilenia. Kup pakiety kredytów i rozwiązuj problemy z maszyną od ręki.
+                  </p>
+
+                  <div className="space-y-3">
+                    {/* Package 1 */}
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-bold text-white/80">Pakiet X5 Skanów</p>
+                        <p className="text-[10px] text-white/40 mt-1">Podstawowa Diagnoza</p>
+                      </div>
+                      <button
+                        onClick={() => handleBuyCredits('5_credits')}
+                        disabled={isRedirectingToStripe}
+                        className="bg-[#f59e0b] hover:bg-[#d97706] text-black px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors"
+                      >
+                        29 PLN
+                      </button>
+                    </div>
+
+                    {/* Package 2 */}
+                    <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <div className="flex gap-2 items-center">
+                          <p className="text-sm font-bold text-white/90">PRO X15 Skanów</p>
+                          <span className="bg-[#f59e0b] text-black text-[9px] font-bold px-1.5 py-0.5 rounded-[4px] uppercase">Best</span>
+                        </div>
+                        <p className="text-[10px] text-white/50 mt-1">Dla mechaników (taniej)</p>
+                      </div>
+                      <button
+                        onClick={() => handleBuyCredits('15_credits')}
+                        disabled={isRedirectingToStripe}
+                        className="bg-[#f59e0b] hover:bg-[#d97706] text-black px-4 py-2 rounded-lg text-xs font-bold uppercase transition-colors"
+                      >
+                        69 PLN
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Account Settings */}
+                <h3 className="text-sm font-bold text-white/90 mt-8 mb-4">Ustawienia</h3>
                 <div className="glass-surface rounded-2xl p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center">

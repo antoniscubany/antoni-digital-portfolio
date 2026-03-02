@@ -19,6 +19,22 @@ export async function analyzeMedia(formData: FormData) {
             return { error: 'No file received.' };
         }
 
+        // ── Step 0: User Authentication & Credit Check
+        const { userId } = await auth();
+        let userDB = null;
+
+        if (userId) {
+            userDB = await db.user.findUnique({ where: { id: userId } });
+            if (!userDB) {
+                userDB = await db.user.create({ data: { id: userId, credits: 1 } });
+            }
+            if (userDB.credits < 1) {
+                return { error: "Brak kredytów. Przejdź do Sklepu aby odblokować skanowanie." };
+            }
+        } else {
+            return { error: "Zaloguj się, aby wykonać diagnozę." };
+        }
+
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const base64Data = buffer.toString('base64');
@@ -121,9 +137,8 @@ export async function analyzeMedia(formData: FormData) {
             }
         }
 
-        // Save to DB if user is authenticated
+        // Save to DB and deduct credit if user is authenticated
         try {
-            const { userId } = await auth();
             if (userId && parsed && !parsed.error) {
                 await db.diagnosisLog.create({
                     data: {
@@ -138,7 +153,14 @@ export async function analyzeMedia(formData: FormData) {
                         actionPlan: parsed.human_explanation || '',
                     },
                 });
-                console.log(`[Sonic] Saved diagnosis for user ${userId}`);
+
+                // Deduct 1 credit
+                await db.user.update({
+                    where: { id: userId },
+                    data: { credits: { decrement: 1 } }
+                });
+
+                console.log(`[Sonic] Saved diagnosis and deducted 1 token for user ${userId}`);
             }
         } catch (dbError) {
             // Don't fail the whole request if DB save fails
@@ -182,5 +204,19 @@ export async function getUserDiagnosisHistory() {
     } catch (error) {
         console.error("[Sonic] Failed to fetch diagnosis history:", error);
         return [];
+    }
+}
+
+// ── Fetch user's credit balance
+export async function getUserCredits() {
+    try {
+        const { userId } = await auth();
+        if (!userId) return 0;
+
+        const user = await db.user.findUnique({ where: { id: userId }, select: { credits: true } });
+        // If they don't exist yet, we visually assume 1 free credit, though DB guarantees 1 on create
+        return user ? user.credits : 1;
+    } catch (err) {
+        return 0;
     }
 }

@@ -10,9 +10,19 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id               String         @id
+  credits          Int            @default(1)
+  stripeCustomerId String?        @unique
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  diagnosisLogs    DiagnosisLog[]
+}
+
 model DiagnosisLog {
   id              String   @id @default(uuid())
   userId          String
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   machineCategory String
   makeModel       String
   symptoms        String

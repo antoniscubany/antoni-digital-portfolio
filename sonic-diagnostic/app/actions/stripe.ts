@@ -1,11 +1,7 @@
 'use server';
 
-import Stripe from 'stripe';
 import { auth } from '@clerk/nextjs/server';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-    apiVersion: '2026-02-25.clover' as any,
-});
+import { stripe } from '@/lib/stripe';
 
 export async function createCheckoutSession() {
     const { userId } = await auth();

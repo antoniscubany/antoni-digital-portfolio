@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-    apiVersion: '2025-02-24.acacia',
+    apiVersion: '2026-02-25.clover',
     appInfo: {
         name: 'Sonic Diagnostic',
         version: '0.1.0',

@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 import { auth } from '@clerk/nextjs/server';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-    apiVersion: '2025-02-24.acacia' as any,
+    apiVersion: '2026-02-25.clover' as any,
 });
 
 export async function createCheckoutSession() {

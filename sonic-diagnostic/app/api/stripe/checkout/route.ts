@@ -34,18 +34,19 @@ export async function POST(req: NextRequest) {
         const pkg = PACKAGES[packageId];
 
         // Ensure user exists in our DB to track customer ID
-        let userDB = await db.user.findUnique({ where: { id: userId } });
+        let userDB = await db.user.findUnique({ where: { userId } });
         if (!userDB) {
-            userDB = await db.user.create({ data: { id: userId } });
+            userDB = await db.user.create({ data: { userId } });
         }
 
         const session = await stripe.checkout.sessions.create({
-            success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/?payment=success`,
-            cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/?payment=cancelled`,
+            success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}?success=true`,
+            cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}?canceled=true`,
             payment_method_types: ['card', 'blik'], // Popular in Poland
             mode: 'payment',
             billing_address_collection: 'auto',
             customer_email: undefined, // Optional: pull from Clerk if needed
+            client_reference_id: userId,
             line_items: [
                 {
                     price_data: {

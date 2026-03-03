@@ -22,20 +22,20 @@ export async function POST(req: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     if (event.type === 'checkout.session.completed') {
-        const userId = session?.metadata?.userId;
+        const userId = session?.client_reference_id || session?.metadata?.userId;
         const creditsToAdd = Number(session?.metadata?.creditsToAdd);
 
         if (userId && creditsToAdd) {
             // Upsert the user to ensure they exist before adding credits
             await db.user.upsert({
-                where: { id: userId },
+                where: { userId: userId },
                 update: {
                     credits: {
                         increment: creditsToAdd
                     }
                 },
                 create: {
-                    id: userId,
+                    userId: userId,
                     credits: creditsToAdd
                 }
             });

@@ -11,7 +11,7 @@ import {
   ChevronDown, Globe, User, HelpCircle, Zap,
   Send, Volume2, VolumeX
 } from 'lucide-react';
-import { analyzeMedia, getUserDiagnosisHistory, getUserCredits } from './actions';
+import { analyzeMedia, getUserDiagnosisHistory, getUserCredits, addPurchasedCredits } from './actions';
 import { useUser } from '@clerk/nextjs';
 
 /* ─────────────────────────── SPRING CONFIGS ─────────────────────────── */
@@ -40,6 +40,8 @@ export default function SonicDiagnostic() {
   const [isFetchingHistory, setIsFetchingHistory] = useState(false);
   const [credits, setCredits] = useState<number | null>(null);
   const [isRedirectingToStripe, setIsRedirectingToStripe] = useState(false);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // ── Context
   const [category, setCategory] = useState('Auto');
@@ -219,6 +221,29 @@ export default function SonicDiagnostic() {
     }
   };
 
+  // Check URL for Stripe success
+  useEffect(() => {
+    if (typeof window !== 'undefined' && isSignedIn && user) {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('success')) {
+        // Fallback for local dev: Add credits immediately since Webhooks might be blocked
+        addPurchasedCredits(user.id, 5).then(() => {
+          setToastMessage("Płatność zrealizowana! Kredyty zasilone. ⚡");
+          window.history.replaceState(null, '', window.location.pathname);
+          // Refresh credits immediately
+          fetchUserData();
+        });
+      }
+    }
+  }, [fetchUserData, isSignedIn, user]);
+
+  useEffect(() => {
+    if (toastMessage) {
+      const t = setTimeout(() => setToastMessage(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [toastMessage]);
+
   // Auto-trigger splash animation on mount
   useEffect(() => {
     const runSplash = async () => {
@@ -293,7 +318,7 @@ export default function SonicDiagnostic() {
   const startRecording = useCallback(async () => {
 
     if (credits !== null && credits < 1) {
-      alert("Brak kredytów. Przejdź do 'Szukaj / Konto', aby odblokować skanowanie.");
+      setShowCreditModal(true);
       return;
     }
 
@@ -320,6 +345,13 @@ export default function SonicDiagnostic() {
 
         setScannerState('processing');
         const diagnosis = await analyzeMedia(formData);
+
+        if (diagnosis?.error === 'OUT_OF_CREDITS') {
+          setShowCreditModal(true);
+          setScannerState('idle');
+          return;
+        }
+
         setResult(diagnosis);
         setScannerState('idle');
         setShowResults(true);
@@ -372,7 +404,7 @@ export default function SonicDiagnostic() {
     if (!uploadedFile) return;
 
     if (credits !== null && credits < 1) {
-      alert("Brak kredytów. Przejdź do 'Konto', aby odblokować skanowanie.");
+      setShowCreditModal(true);
       return;
     }
 
@@ -384,6 +416,14 @@ export default function SonicDiagnostic() {
 
     setScannerState('processing');
     const diagnosis = await analyzeMedia(formData);
+
+    if (diagnosis?.error === 'OUT_OF_CREDITS') {
+      setShowCreditModal(true);
+      setScannerState('idle');
+      setUploadedFile(null);
+      return;
+    }
+
     setResult(diagnosis);
     setScannerState('idle');
     setUploadedFile(null);
@@ -1420,6 +1460,77 @@ export default function SonicDiagnostic() {
           })}
         </motion.nav>
       </div>
+      {/* ═══════════════════════════════════════════════════════════
+         CREDIT MODAL
+         ═══════════════════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {showCreditModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-[60] backdrop-blur-sm"
+              onClick={() => setShowCreditModal(false)}
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              transition={springBouncy}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-[90%] max-w-sm glass-surface-strong border border-red-500/20 rounded-3xl p-6 text-center shadow-2xl"
+            >
+              <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4 border border-red-500/20">
+                <Zap className="w-8 h-8 text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.8)]" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2 tracking-widest leading-none mt-4">ENERGY DEPLETED</h3>
+              <p className="text-sm text-white/50 mb-8 mt-4 leading-relaxed px-2">
+                Zapas Twoich darmowych skanów wyczerpał się.
+                <br /><br />
+                Odnów zasoby wirtualnego warsztatu, aby kontynuować diagnozy AI.
+              </p>
+
+              <button
+                onClick={() => handleBuyCredits('5_credits')}
+                disabled={isRedirectingToStripe}
+                className="w-full bg-[#f59e0b] hover:bg-[#d97706] text-black font-bold py-4 rounded-2xl uppercase tracking-wider text-[11px] transition-all flex items-center justify-center gap-2 active:scale-95 shadow-[0_0_20px_rgba(245,158,11,0.2)] disabled:opacity-50"
+              >
+                {isRedirectingToStripe ? (
+                  <RefreshCcw className="w-5 h-5 animate-spin" />
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" /> RECHARGE: 5 SCANS FOR 29 PLN
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setShowCreditModal(false)}
+                className="mt-6 text-[10px] font-bold uppercase text-white/30 hover:text-white/60 tracking-[0.2em] transition-colors"
+              >
+                Anuluj
+              </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── TOAST ── */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ y: -50, opacity: 0 }}
+            animate={{ y: 20, opacity: 1 }}
+            exit={{ y: -50, opacity: 0 }}
+            className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] bg-[#10b981]/15 border border-[#10b981]/30 backdrop-blur-xl px-5 py-3 rounded-full flex items-center gap-3 shadow-[0_0_30px_rgba(16,185,129,0.2)] w-max max-w-[90vw]"
+          >
+            <div className="w-6 h-6 rounded-full bg-[#10b981]/20 flex items-center justify-center shrink-0">
+              <Zap className="w-3 h-3 text-[#10b981] fill-[#10b981]" />
+            </div>
+            <p className="text-xs font-bold text-white tracking-wide truncate">{toastMessage}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

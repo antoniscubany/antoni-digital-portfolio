@@ -6,6 +6,37 @@ import { db } from "@/lib/db";
 
 const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
 
+export async function checkAndDeductCredit(userId: string) {
+    let userDB = await db.user.findUnique({ where: { userId } });
+    if (!userDB) {
+        userDB = await db.user.create({ data: { userId, credits: 1 } });
+    }
+
+    if (userDB.credits <= 0) {
+        return { error: "OUT_OF_CREDITS" };
+    }
+
+    await db.user.update({
+        where: { userId },
+        data: { credits: { decrement: 1 } }
+    });
+
+    return { success: true };
+}
+
+export async function addPurchasedCredits(userId: string, amount: number) {
+    let userDB = await db.user.findUnique({ where: { userId } });
+    if (!userDB) {
+        await db.user.create({ data: { userId, credits: amount } });
+    } else {
+        await db.user.update({
+            where: { userId },
+            data: { credits: { increment: amount } }
+        });
+    }
+    return { success: true };
+}
+
 // Przyjmujemy natywny format danych (FormData)
 export async function analyzeMedia(formData: FormData) {
     try {
@@ -21,18 +52,14 @@ export async function analyzeMedia(formData: FormData) {
 
         // ── Step 0: User Authentication & Credit Check
         const { userId } = await auth();
-        let userDB = null;
 
-        if (userId) {
-            userDB = await db.user.findUnique({ where: { id: userId } });
-            if (!userDB) {
-                userDB = await db.user.create({ data: { id: userId, credits: 1 } });
-            }
-            if (userDB.credits < 1) {
-                return { error: "Brak kredytów. Przejdź do Sklepu aby odblokować skanowanie." };
-            }
-        } else {
+        if (!userId) {
             return { error: "Zaloguj się, aby wykonać diagnozę." };
+        }
+
+        const creditCheck = await checkAndDeductCredit(userId);
+        if (creditCheck.error) {
+            return creditCheck; // Will return { error: "OUT_OF_CREDITS" }
         }
 
         const arrayBuffer = await file.arrayBuffer();
@@ -40,9 +67,10 @@ export async function analyzeMedia(formData: FormData) {
         const base64Data = buffer.toString('base64');
         const mimeType = file.type;
 
-        // Models: primary → fallback
+        // Models: primary → fallback → last resort
         const PRIMARY_MODEL = "gemini-3.1-pro-preview";
         const FALLBACK_MODEL = "gemini-3-pro";
+        const FAST_FALLBACK_MODEL = "gemini-3.0-flash";
 
         const userContext = `Machine Category: ${category}\nMake & Model: ${makeModel}\nObserved Symptoms: ${symptoms}`;
 
@@ -52,22 +80,23 @@ export async function analyzeMedia(formData: FormData) {
 
       USER CONTEXT: Category: ${category}, Make/Model: ${makeModel}, Symptoms: ${symptoms}
 
-      DIAGNOSTIC RULES:
-      1. TONE: Speak to the user like a friendly, trustworthy expert. Avoid overly robotic/academic jargon in the explanation. Use Polish language (Język polski).
-      2. REASONING: Explain EXACTLY what you heard/saw that led to your conclusion (e.g., "At 0:04 I heard a metallic rhythm...").
-      3. COST REALISM: Factor in the age/make of the car. For an old Mazda/BMW, a full engine rebuild (10k PLN) is often absurd; suggest a used engine swap (3k-5k PLN) instead.
-      4. CONFIDENCE: State honestly how sure you are (0-100%). If audio is bad, lower the score and say you are guessing.
-      5. LANGUAGE: All text fields (except severity) MUST be in Polish.
+      CRITICAL DIAGNOSTIC RULES:
+      1. DO NOT HALLUCINATE: If the audio/video is too short, muffled, or unclear, DO NOT make up a diagnosis. Admit you cannot hear it clearly. Ask the user to record closer to the engine or provide more context. In this case, set severity to "SAFE" and confidence_score to 0.
+      2. TONE: Speak to the user like a friendly, trustworthy expert. Avoid overly robotic/academic jargon. Use Polish language (Język polski).
+      3. REASONING: Explain EXACTLY what you heard/saw that led to your conclusion (e.g., "At 0:04 I heard a metallic rhythm..."). If you didn't hear anything, say so.
+      4. COST REALISM: Factor in the age/make of the car. Propose realistic next steps.
+      5. CONFIDENCE: State honestly how sure you are (0-100%). If it's a guess, lower the score significantly.
+      6. LANGUAGE: All text fields (except severity) MUST be in Polish.
 
       RETURN ONLY PURE JSON. NO MARKDOWN.
       { 
-        "diagnosis_title": "Short name of the issue (e.g., Rod Knock)",
+        "diagnosis_title": "Short name of the issue (e.g., Stuk korbowodowy, or 'Zbyt głośne tło')",
         "severity": "LOW" | "MEDIUM" | "CRITICAL" | "SAFE", 
         "confidence_score": 85,
-        "reasoning": "What exactly did you hear/see to make this conclusion? Build trust here.",
-        "human_explanation": "Explain the problem in simple, non-technical terms to a normal person.",
-        "cost_and_action": "Realistic cost estimate in PLN and the smartest next step (e.g., 'Tow it, do not drive').",
-        "chat_opener": "A proactive, friendly question to start the chat based on the fault (e.g., 'Hey! I noticed that loud rod knock. Do you want to know if it's safe to drive to the shop?')"
+        "reasoning": "What exactly did you hear/see to make this conclusion?",
+        "human_explanation": "Explain the problem in simple terms. If unsure, explain why you need a better recording.",
+        "cost_and_action": "Realistic cost estimate in PLN and the smartest next step.",
+        "chat_opener": "A proactive, friendly question to start the chat."
       }
     `;
 
@@ -81,40 +110,37 @@ export async function analyzeMedia(formData: FormData) {
             }
         ];
 
-        // Helper: check if error is an overload/rate-limit
-        const isOverloadError = (err: unknown): boolean => {
-            if (!(err instanceof Error)) return false;
-            const msg = err.message.toLowerCase();
-            return msg.includes('429') ||
-                msg.includes('503') ||
-                msg.includes('resource_exhausted') ||
-                msg.includes('overloaded') ||
-                msg.includes('rate limit') ||
-                msg.includes('quota');
-        };
-
         let text: string;
-        let usedModel = PRIMARY_MODEL;
 
         try {
             // Try primary model: Gemini 3.1 Pro
             const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
             const result = await model.generateContent(contentParts);
-            const response = await result.response;
-            text = response.text();
+            text = (await result.response).text();
             console.log(`[Sonic] Used primary model: ${PRIMARY_MODEL}`);
         } catch (primaryError) {
-            if (isOverloadError(primaryError)) {
-                // Fallback to Gemini 3 Pro
-                console.warn(`[Sonic] ${PRIMARY_MODEL} overloaded, falling back to ${FALLBACK_MODEL}`);
-                usedModel = FALLBACK_MODEL;
+            console.warn(`[Sonic] ${PRIMARY_MODEL} failed, attempting fallback to ${FALLBACK_MODEL}. Error:`, (primaryError as Error).message);
+
+            try {
+                // Try secondary model: Gemini 3 Pro
                 const fallbackModel = genAI.getGenerativeModel({ model: FALLBACK_MODEL });
                 const result = await fallbackModel.generateContent(contentParts);
-                const response = await result.response;
-                text = response.text();
-                console.log(`[Sonic] Used fallback model: ${FALLBACK_MODEL}`);
-            } else {
-                throw primaryError; // Re-throw non-overload errors
+                text = (await result.response).text();
+                console.log(`[Sonic] Used secondary model: ${FALLBACK_MODEL}`);
+            } catch (secondaryError) {
+                console.warn(`[Sonic] ${FALLBACK_MODEL} failed, attempting FAST fallback to ${FAST_FALLBACK_MODEL}. Error:`, (secondaryError as Error).message);
+
+                try {
+                    // Try tertiary fallback: Gemini 2.5 Flash (highly available)
+                    const fastModel = genAI.getGenerativeModel({ model: FAST_FALLBACK_MODEL });
+                    const result = await fastModel.generateContent(contentParts);
+                    text = (await result.response).text();
+                    console.log(`[Sonic] Used tertiary fast model: ${FAST_FALLBACK_MODEL}`);
+                } catch (tertiaryError) {
+                    // If everything fails, it's a global API outtage or total overload
+                    console.error("[Sonic] ALL models failed. Final error:", tertiaryError);
+                    return { error: "Serwery AI są w tej chwili przeciążone. Spróbuj ponownie za kilka minut." };
+                }
             }
         }
 
@@ -137,12 +163,12 @@ export async function analyzeMedia(formData: FormData) {
             }
         }
 
-        // Save to DB and deduct credit if user is authenticated
+        // Save to DB (credits already deducted at start)
         try {
             if (userId && parsed && !parsed.error) {
                 await db.diagnosisLog.create({
                     data: {
-                        userId,
+                        userId, // Links to User.userId due to updated Prisma relations
                         machineCategory: category,
                         makeModel,
                         symptoms,
@@ -154,13 +180,7 @@ export async function analyzeMedia(formData: FormData) {
                     },
                 });
 
-                // Deduct 1 credit
-                await db.user.update({
-                    where: { id: userId },
-                    data: { credits: { decrement: 1 } }
-                });
-
-                console.log(`[Sonic] Saved diagnosis and deducted 1 token for user ${userId}`);
+                console.log(`[Sonic] Saved diagnosis for user ${userId}`);
             }
         } catch (dbError) {
             // Don't fail the whole request if DB save fails
@@ -172,12 +192,8 @@ export async function analyzeMedia(formData: FormData) {
     } catch (error) {
         console.error("AI Error Details:", error);
 
-        let errorMessage = "Failed to analyze media.";
-        if (error instanceof Error && error.message) {
-            errorMessage += ` Details: ${error.message}`;
-        }
-
-        return { error: errorMessage };
+        // Return a generic, user-friendly error safely without tech jargon
+        return { error: "Wystąpił nieoczekiwany problem podczas analizy pliku. Spróbuj nagrać go jeszcze raz." };
     }
 }
 
@@ -213,7 +229,7 @@ export async function getUserCredits() {
         const { userId } = await auth();
         if (!userId) return 0;
 
-        const user = await db.user.findUnique({ where: { id: userId }, select: { credits: true } });
+        const user = await db.user.findUnique({ where: { userId: userId }, select: { credits: true } });
         // If they don't exist yet, we visually assume 1 free credit, though DB guarantees 1 on create
         return user ? user.credits : 1;
     } catch (err) {

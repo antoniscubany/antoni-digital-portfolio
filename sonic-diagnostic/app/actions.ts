@@ -4,7 +4,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 
-const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "");
+// We provide a fallback string so that Next.js static build doesn't crash if the env var is missing at build time
+const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY || "fallback_build_key");
 
 export async function checkAndDeductCredit(userId: string) {
     let userDB = await db.user.findUnique({ where: { userId } });

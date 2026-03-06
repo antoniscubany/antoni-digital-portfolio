@@ -237,3 +237,47 @@ export async function getUserCredits() {
         return 0;
     }
 }
+
+// ── Virtual AI Mechanic Chat (Gemini)
+export async function askMechanic(
+    messages: { role: 'user' | 'model'; content: string }[],
+    activeContext?: string
+) {
+    try {
+        // Authenticate (chat is available to everyone, even guests, but we check if needed)
+
+        // Ensure prompt emphasizes Polish output and professional mechanic tone
+        const systemPrompt = `
+Jesteś profesjonalnym, empatycznym mechnikiem samochodowym i przemysłowym (AI).
+Pomagasz użytkownikom diagnozować usterki na podstawie ich opisu i odpowiadasz na ich pytania.
+Pisz krótko, konkretnie i z pomocnym nastawieniem, unikając lania wody.
+Zawsze używaj języka polskiego. NIE UŻYWAJ FORMATOWANIA MARKDOWN z wyjątkiem pogrubień gwiazdką (**ważne**). Żadnych nagłówków (#). Wstawiaj entery dla czytelnosi. 
+
+${activeContext ? `AKTUALNY KONTEKST UŻYTKOWNIKA (Maszyna / Ostatni Skan):\n${activeContext}\nUżyj tego kontekstu do budowania swoich odpowiedzi, o ile to możliwe.` : ''}
+`;
+
+        const model = genAI.getGenerativeModel({
+            model: "gemini-3.1-pro-preview",
+            systemInstruction: systemPrompt
+        });
+
+        const history = messages.slice(0, -1).map(m => ({
+            role: m.role,
+            parts: [{ text: m.content }]
+        }));
+
+        const currentMessage = messages[messages.length - 1].content;
+
+        const chat = model.startChat({
+            history: history,
+        });
+
+        const result = await chat.sendMessage(currentMessage);
+        const responseText = (await result.response).text();
+
+        return { content: responseText };
+    } catch (error) {
+        console.error("[Sonic] askMechanic failed:", error);
+        return { error: "Przepraszam, mam teraz brudne ręce i nie mogę odpisać. (Błąd połączenia z serwerem)." };
+    }
+}

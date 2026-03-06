@@ -69,9 +69,9 @@ export async function analyzeMedia(formData: FormData) {
         const mimeType = file.type;
 
         // Models: primary → fallback → last resort
-        const PRIMARY_MODEL = "gemini-3.1-pro-preview";
-        const FALLBACK_MODEL = "gemini-3-pro";
-        const FAST_FALLBACK_MODEL = "gemini-3.0-flash";
+        const PRIMARY_MODEL = "gemini-2.0-flash";
+        const FALLBACK_MODEL = "gemini-1.5-flash";
+        const FAST_FALLBACK_MODEL = "gemini-2.0-flash-lite";
 
         const userContext = `Machine Category: ${category}\nMake & Model: ${makeModel}\nObserved Symptoms: ${symptoms}`;
 
@@ -115,7 +115,7 @@ export async function analyzeMedia(formData: FormData) {
 
         try {
             // Try primary model: Gemini 3.1 Pro
-            const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL });
+            const model = genAI.getGenerativeModel({ model: PRIMARY_MODEL, generationConfig: { responseMimeType: "text/plain" } });
             const result = await model.generateContent(contentParts);
             text = (await result.response).text();
             console.log(`[Sonic] Used primary model: ${PRIMARY_MODEL}`);
@@ -241,23 +241,25 @@ export async function getUserCredits() {
 // ── Virtual AI Mechanic Chat (Gemini)
 export async function askMechanic(
     messages: { role: 'user' | 'model'; content: string }[],
-    activeContext?: string
+    activeContext?: string,
+    diagnosisHistory?: { diagnosisTitle: string; severity: string; confidenceScore: number; makeModel: string; createdAt: string }[]
 ) {
     try {
-        // Authenticate (chat is available to everyone, even guests, but we check if needed)
+        // Build history context string from saved reports
+        const historyContext = diagnosisHistory && diagnosisHistory.length > 0
+            ? `\n\nHISTORIA DIAGNOZ UŻYTKOWNIKA (${diagnosisHistory.length} raportów):\n${diagnosisHistory.slice(0, 5).map((d, i) =>
+                `${i + 1}. ${d.diagnosisTitle} | ${d.severity} | ${d.confidenceScore}% pewności | ${d.makeModel || 'brak modelu'} | ${new Date(d.createdAt).toLocaleDateString('pl-PL')}`
+            ).join('\n')}`
+            : '';
 
-        // Ensure prompt emphasizes Polish output and professional mechanic tone
-        const systemPrompt = `
-Jesteś profesjonalnym, empatycznym mechnikiem samochodowym i przemysłowym (AI).
+        const systemPrompt = `Jesteś profesjonalnym, empatycznym mechanikiem samochodowym i przemysłowym (AI) asystentem o imieniu Mechanik.
 Pomagasz użytkownikom diagnozować usterki na podstawie ich opisu i odpowiadasz na ich pytania.
 Pisz krótko, konkretnie i z pomocnym nastawieniem, unikając lania wody.
-Zawsze używaj języka polskiego. NIE UŻYWAJ FORMATOWANIA MARKDOWN z wyjątkiem pogrubień gwiazdką (**ważne**). Żadnych nagłówków (#). Wstawiaj entery dla czytelnosi. 
-
-${activeContext ? `AKTUALNY KONTEKST UŻYTKOWNIKA (Maszyna / Ostatni Skan):\n${activeContext}\nUżyj tego kontekstu do budowania swoich odpowiedzi, o ile to możliwe.` : ''}
-`;
+Zawsze używaj języka polskiego. NIE UŻYWAJ FORMATOWANIA MARKDOWN z wyjątkiem pogrubień gwiazdką (**ważne**). Żadnych nagłówków (#). Wstawiaj entery dla czytelności.
+${activeContext ? `\nAKTUALNA DIAGNOZA (ostatni skan):\n${activeContext}\nOdnoś się do tej diagnozy przy odpowiedziach.` : ''}${historyContext}`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.0-flash",
             systemInstruction: systemPrompt
         });
 

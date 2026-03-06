@@ -378,7 +378,7 @@ export default function SonicDiagnostic() {
     setChatMessages(updated);
     setIsChatLoading(true);
     try {
-      const res = await askMechanic(updated, activeContext);
+      const res = await askMechanic(updated, activeContext, diagnosisHistory);
       setChatMessages(prev => [...prev, {
         role: 'model',
         content: res.error ? res.error : (res.content ?? '…'),
@@ -526,7 +526,7 @@ export default function SonicDiagnostic() {
             </h2>
             <p className="text-sm text-white/28 max-w-[240px] mx-auto leading-relaxed">
               {scannerState === 'processing'
-                ? 'Gemini przetwarza nagranie'
+                ? 'Anto-Lab analizuje nagranie…'
                 : 'Zbliż mikrofon do źródła dźwięku'}
             </p>
             {scannerState === 'recording' && (
@@ -557,15 +557,17 @@ export default function SonicDiagnostic() {
 
         {/* ── TOP HEADER ── */}
         <div className="shrink-0 flex items-center justify-between px-5 py-3" style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 14px)' }}>
-          <div className="flex items-center gap-2">
-            <Image src="/logo.png" alt="Sonic" width={26} height={26} className="opacity-75" />
-            <div className="flex items-baseline gap-1">
-              <span className="text-[15px] font-bold text-white/85 tracking-tight">Sonic</span>
-              <span className="text-[15px] font-light text-white/28">Diagnostic</span>
-            </div>
-          </div>
+          {/* Settings gear icon — top left */}
+          <motion.button
+            onClick={() => setActiveTab('settings')}
+            whileTap={{ scale: 0.88 }}
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
+            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <Settings className="w-4 h-4 text-white/50" />
+          </motion.button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <SignedIn>
               {credits !== null && (
                 <motion.button
@@ -942,91 +944,81 @@ export default function SonicDiagnostic() {
                 transition={{ duration: 0.2 }}
                 className="absolute inset-0 flex flex-col"
               >
-                {/* Chat header */}
-                <div className="shrink-0 flex items-center gap-3 px-5 pt-2 pb-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center"
-                    style={{ background: 'radial-gradient(circle at 40% 35%, rgba(0,212,255,0.18), rgba(6,13,20,0.9))', border: '1px solid rgba(0,212,255,0.18)' }}>
-                    <Wrench className="w-4 h-4 text-[#00d4ff]" />
+                {/* iMessage-style chat header */}
+                <div className="shrink-0 flex flex-col items-center pt-2 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center mb-1.5"
+                    style={{ background: 'radial-gradient(circle at 38% 32%, rgba(0,80,140,0.85), rgba(6,13,20,0.95))', border: '1px solid rgba(0,212,255,0.2)', boxShadow: '0 0 20px rgba(0,212,255,0.12)' }}>
+                    <Wrench className="w-5 h-5 text-[#00d4ff]" />
                   </div>
-                  <div>
-                    <p className="text-[13px] font-semibold text-white/82 leading-none mb-0.5">AI Mechanik</p>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#10b981]" style={{ filter: 'drop-shadow(0 0 4px rgba(16,185,129,0.8))' }} />
-                      <span className="text-[10px] text-[#10b981]/80 font-medium">Online</span>
-                      {result && (
-                        <>
-                          <span className="text-white/15 mx-0.5">·</span>
-                          <span className="text-[10px] text-white/28 truncate max-w-[140px]">{result.diagnosis_title}</span>
-                        </>
-                      )}
-                    </div>
+                  <p className="text-[14px] font-semibold text-white/90 leading-none">Mechanik AI</p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#34C759]" style={{ filter: 'drop-shadow(0 0 3px rgba(52,199,89,0.9))' }} />
+                    <span className="text-[11px] text-white/38">
+                      {result ? result.diagnosis_title : 'Gotowy do pomocy'}
+                    </span>
                   </div>
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3.5">
+                <div className="flex-1 overflow-y-auto px-4 py-5 space-y-2">
                   {chatMessages.length === 0 && (
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center">
-                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                          <MessageCircle className="w-6 h-6 text-white/12" />
-                        </div>
-                        <p className="text-[13px] text-white/25">Zadaj pytanie mechanikowi</p>
+                    <div className="flex flex-col items-center justify-center h-full gap-3 opacity-40">
+                      <div className="w-14 h-14 rounded-full flex items-center justify-center"
+                        style={{ background: 'rgba(255,255,255,0.05)' }}>
+                        <MessageCircle className="w-7 h-7 text-white/30" />
                       </div>
+                      <p className="text-[13px] text-white/35 text-center leading-relaxed max-w-[200px]">Zadaj pytanie mechanikowi lub nagraj dźwięk maszyny</p>
                     </div>
                   )}
 
                   <AnimatePresence initial={false}>
-                    {chatMessages.map((msg, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        transition={{ duration: 0.22, ease: 'easeOut' }}
-                        className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} items-end gap-2`}
-                      >
-                        {msg.role === 'model' && (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mb-0.5"
-                            style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.15)' }}>
-                            <Wrench className="w-3 h-3 text-[#00d4ff]" />
-                          </div>
-                        )}
-                        <div
-                          className={`max-w-[78%] px-4 py-3 text-[13px] leading-relaxed ${
-                            msg.role === 'user'
-                              ? 'rounded-2xl rounded-br-[6px] text-white'
-                              : 'rounded-2xl rounded-bl-[6px] text-white/72'
-                          }`}
-                          style={msg.role === 'user'
-                            ? { background: 'linear-gradient(135deg, #0ea5e9, #0284c7)' }
-                            : { background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }
-                          }
+                    {chatMessages.map((msg, i) => {
+                      const isUser = msg.role === 'user';
+                      const prevMsg = chatMessages[i - 1];
+                      const isFirst = !prevMsg || prevMsg.role !== msg.role;
+                      return (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={{ duration: 0.2, ease: [0.34, 1.2, 0.64, 1] }}
+                          className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+                          style={{ marginBottom: isFirst && i > 0 ? '6px' : '2px' }}
                         >
-                          {msg.content}
-                        </div>
-                      </motion.div>
-                    ))}
+                          <div
+                            className={`max-w-[76%] px-4 py-2.5 text-[14px] leading-[1.5] whitespace-pre-wrap ${
+                              isUser
+                                ? 'rounded-[20px] rounded-br-[6px] text-white font-[400]'
+                                : 'rounded-[20px] rounded-bl-[6px] text-white/88 font-[400]'
+                            }`}
+                            style={isUser
+                              ? { background: '#0A84FF' }
+                              : { background: 'rgba(44,44,46,0.95)' }
+                            }
+                          >
+                            {msg.content}
+                          </div>
+                        </motion.div>
+                      );
+                    })}
                   </AnimatePresence>
 
-                  {/* Typing indicator */}
+                  {/* Typing indicator — iMessage dots */}
                   <AnimatePresence>
                     {isChatLoading && (
                       <motion.div
-                        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                        className="flex items-end gap-2"
+                        initial={{ opacity: 0, y: 6, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+                        className="flex justify-start"
                       >
-                        <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
-                          style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.15)' }}>
-                          <Wrench className="w-3 h-3 text-[#00d4ff]" />
-                        </div>
-                        <div className="px-4 py-3 rounded-2xl rounded-bl-[6px] flex items-center gap-1.5"
-                          style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                          {[0, 0.18, 0.36].map((delay) => (
+                        <div className="px-4 py-3 rounded-[20px] rounded-bl-[6px] flex items-center gap-1"
+                          style={{ background: 'rgba(44,44,46,0.95)' }}>
+                          {[0, 0.2, 0.4].map((delay) => (
                             <motion.div
                               key={delay}
-                              className="w-1.5 h-1.5 rounded-full bg-white/35"
-                              animate={{ scale: [1, 1.6, 1], opacity: [0.35, 0.9, 0.35] }}
-                              transition={{ repeat: Infinity, duration: 1.1, delay, ease: 'easeInOut' }}
+                              className="w-2 h-2 rounded-full"
+                              style={{ background: 'rgba(255,255,255,0.45)' }}
+                              animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.1, 0.8] }}
+                              transition={{ repeat: Infinity, duration: 1.2, delay, ease: 'easeInOut' }}
                             />
                           ))}
                         </div>
@@ -1037,27 +1029,29 @@ export default function SonicDiagnostic() {
                   <div ref={chatEndRef} />
                 </div>
 
-                {/* Input bar */}
-                <div className="shrink-0 px-4 pb-3 pt-2">
-                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-2xl"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendChatMessage()}
-                      placeholder="Napisz wiadomość…"
-                      disabled={isChatLoading}
-                      className="flex-1 bg-transparent text-[13px] text-white/78 outline-none placeholder:text-white/20 disabled:opacity-50 py-1"
-                    />
+                {/* iMessage-style input bar */}
+                <div className="shrink-0 px-4 pb-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="flex items-end gap-2.5">
+                    <div className="flex-1 rounded-[22px] px-4 py-2.5 min-h-[44px] flex items-center"
+                      style={{ background: 'rgba(44,44,46,0.95)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendChatMessage()}
+                        placeholder="iMessage"
+                        disabled={isChatLoading}
+                        className="flex-1 bg-transparent text-[15px] text-white/85 outline-none placeholder:text-white/22 disabled:opacity-50"
+                      />
+                    </div>
                     <motion.button
                       onClick={sendChatMessage}
                       disabled={!chatInput.trim() || isChatLoading}
-                      whileTap={{ scale: 0.88 }}
-                      className="w-8 h-8 rounded-xl flex items-center justify-center transition-all disabled:opacity-25"
-                      style={{ background: chatInput.trim() && !isChatLoading ? 'rgba(0,212,255,0.16)' : 'rgba(255,255,255,0.05)' }}
+                      whileTap={{ scale: 0.85 }}
+                      className="w-[44px] h-[44px] rounded-full flex items-center justify-center transition-all shrink-0"
+                      style={{ background: chatInput.trim() && !isChatLoading ? '#0A84FF' : 'rgba(255,255,255,0.08)' }}
                     >
-                      <Send className={`w-3.5 h-3.5 ${chatInput.trim() && !isChatLoading ? 'text-[#00d4ff]' : 'text-white/28'}`} />
+                      <Send className={`w-4 h-4 ${chatInput.trim() && !isChatLoading ? 'text-white' : 'text-white/25'}`} style={{ transform: 'translateX(1px)' }} />
                     </motion.button>
                   </div>
                 </div>
@@ -1073,7 +1067,17 @@ export default function SonicDiagnostic() {
                 className="absolute inset-0 overflow-y-auto"
               >
                 <div className="px-5 pt-2 pb-10 space-y-5">
-                  <h2 className="text-[20px] font-bold text-white/88">Ustawienia</h2>
+                  <div className="flex items-center gap-3 mb-1">
+                    <motion.button
+                      onClick={() => setActiveTab('home')}
+                      whileTap={{ scale: 0.9 }}
+                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                      style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      <ChevronRight className="w-4 h-4 text-white/50 rotate-180" />
+                    </motion.button>
+                    <h2 className="text-[20px] font-bold text-white/88">Ustawienia</h2>
+                  </div>
 
                   {/* Credits / upgrade */}
                   <div className="rounded-2xl p-5 relative overflow-hidden"
@@ -1188,7 +1192,7 @@ export default function SonicDiagnostic() {
 
                   <div className="text-center pt-3 space-y-1">
                     <p className="text-[9px] text-white/12 uppercase tracking-[0.16em]">Sonic Diagnostic v5.0</p>
-                    <p className="text-[9px] text-white/8">Powered by Gemini AI</p>
+                    <p className="text-[9px] text-white/8">Powered by Anto-Lab</p>
                   </div>
                 </div>
               </motion.div>
@@ -1198,40 +1202,39 @@ export default function SonicDiagnostic() {
         </div>
 
         {/* ── BOTTOM NAVIGATION ── */}
-        <div className="shrink-0 px-4 pb-3 pt-1" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)' }}>
+        <div className="shrink-0 px-5 pb-4 pt-2" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)' }}>
           <motion.nav
             initial={{ y: 36, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.18, ...springBouncy }}
-            className="flex items-center px-2 py-1.5 rounded-[26px]"
-            style={{ background: 'rgba(12,20,30,0.7)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', WebkitBackdropFilter: 'blur(60px)' }}
+            className="flex items-center justify-around px-4 py-2 rounded-[30px]"
+            style={{ background: 'rgba(12,20,30,0.75)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', WebkitBackdropFilter: 'blur(60px)' }}
           >
             {([
-              { id: 'home'     as TabId, icon: Home,          label: 'Skaner' },
-              { id: 'history'  as TabId, icon: Clock,         label: 'Historia' },
-              { id: 'chat'     as TabId, icon: MessageCircle, label: 'Czat' },
-              { id: 'settings' as TabId, icon: Settings,      label: 'Więcej' },
+              { id: 'home'    as TabId, icon: Home,          label: 'Skaner' },
+              { id: 'history' as TabId, icon: Clock,         label: 'Historia' },
+              { id: 'chat'    as TabId, icon: MessageCircle, label: 'Czat' },
             ]).map((tab) => {
               const isActive = activeTab === tab.id;
               return (
                 <motion.button
                   key={tab.id}
                   onClick={() => { setActiveTab(tab.id); if (tab.id !== 'home') setShowResults(false); }}
-                  whileTap={{ scale: 0.92 }}
-                  className="relative flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-[20px] transition-colors"
+                  whileTap={{ scale: 0.9 }}
+                  className="relative flex flex-col items-center gap-1.5 px-6 py-3 rounded-[22px] transition-colors"
                 >
                   {isActive && (
                     <motion.div
                       layoutId="nav-bg"
-                      className="absolute inset-0 rounded-[20px]"
-                      style={{ background: 'rgba(255,255,255,0.09)' }}
+                      className="absolute inset-0 rounded-[22px]"
+                      style={{ background: 'rgba(255,255,255,0.1)' }}
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                     />
                   )}
                   <tab.icon
-                    className={`w-[18px] h-[18px] relative z-10 transition-all duration-200 ${isActive ? 'text-white' : 'text-white/22'}`}
-                    style={isActive ? { filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.3))' } : {}}
+                    className={`w-[20px] h-[20px] relative z-10 transition-all duration-200 ${isActive ? 'text-white' : 'text-white/28'}`}
+                    style={isActive ? { filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.35))' } : {}}
                   />
-                  <span className={`text-[9px] font-medium relative z-10 transition-colors duration-200 ${isActive ? 'text-white/75' : 'text-white/18'}`}>
+                  <span className={`text-[10px] font-medium relative z-10 transition-colors duration-200 ${isActive ? 'text-white/80' : 'text-white/25'}`}>
                     {tab.label}
                   </span>
                 </motion.button>

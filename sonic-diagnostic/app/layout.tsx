@@ -10,6 +10,8 @@ export const metadata: Metadata = {
     "AI-powered predictive maintenance through real-time audio frequency analysis.",
 };
 
+export const maxDuration = 60; // Ustawia limit na 60 sekund (wymaga konta Vercel Pro dla >15s)
+
 export default function RootLayout({
   children,
 }: Readonly<{

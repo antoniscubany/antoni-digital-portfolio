@@ -2,44 +2,33 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/nextjs';
-import {
-  motion, AnimatePresence,
-  useAnimation, useMotionValue, useSpring, useTransform
-} from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
 import {
-  Upload, FileText, X,
-  Home, Clock, MessageCircle, Settings,
+  Upload, FileText, X, Home, Search, Settings, Bike,
   RefreshCcw, AlertTriangle, Wrench, FileAudio,
-  ChevronRight, Globe, User, HelpCircle, Zap,
-  Send
+  ChevronRight, Zap, Send, MessageCircle, Target
 } from 'lucide-react';
 import {
   analyzeMedia, getUserDiagnosisHistory,
   getUserCredits, addPurchasedCredits, askMechanic
 } from './actions';
 import { useUser } from '@clerk/nextjs';
+import SplashScreen from './components/SplashScreen';
+import EngineTab from './components/EngineTab';
+import BikeTab from './components/BikeTab';
+import ChatTab from './components/ChatTab';
+import SettingsTab from './components/SettingsTab';
+import { TabId, ScannerState, ChatMsg, springBouncy, springSmooth, ANALYSIS_GOALS, FUEL_TYPES } from './components/types';
 
-/* ─── Spring configs ─── */
-const springBouncy = { type: 'spring' as const, stiffness: 320, damping: 22 };
-const springSmooth = { type: 'spring' as const, stiffness: 200, damping: 26 };
-
-/* ─── Types ─── */
-type TabId = 'home' | 'history' | 'chat' | 'settings';
-type ScannerState = 'idle' | 'recording' | 'fileReady' | 'processing';
-type ChatMsg = { role: 'user' | 'model'; content: string };
-
-/* ════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-   ════════════════════════════════════════════════════════════ */
 export default function SonicDiagnostic() {
-
   /* ── UI state ── */
-  const [showSplash, setShowSplash]             = useState(true);
-  const [activeTab, setActiveTab]               = useState<TabId>('home');
-  const [scannerState, setScannerState]         = useState<ScannerState>('idle');
+  const [showSplash, setShowSplash] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabId>('home');
+  const [scannerState, setScannerState] = useState<ScannerState>('idle');
   const [showContextSheet, setShowContextSheet] = useState(false);
-  const [showResults, setShowResults]           = useState(false);
+  const [pendingAction, setPendingAction] = useState<'record' | 'analyze' | null>(null);
+  const [showResults, setShowResults] = useState(false);
 
   /* ── User / credits ── */
   const { isLoaded, isSignedIn, user } = useUser();
@@ -50,122 +39,38 @@ export default function SonicDiagnostic() {
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  /* ── Context ── */
-  const [category, setCategory] = useState('Auto');
-  const [makeModel, setMakeModel] = useState('');
-  const [symptoms, setSymptoms]   = useState('');
+  /* ── Car Context (new specific fields) ── */
+  const [marka, setMarka] = useState('');
+  const [model, setModel] = useState('');
+  const [rokProdukcji, setRokProdukcji] = useState('');
+  const [przebieg, setPrzebieg] = useState('');
+  const [typPaliwa, setTypPaliwa] = useState('');
+  const [symptoms, setSymptoms] = useState('');
+
+  /* ── Analysis Goal ── */
+  const [analysisGoal, setAnalysisGoal] = useState('Wykryj usterkę');
+  const [customGoal, setCustomGoal] = useState('');
+  const [showCustomGoal, setShowCustomGoal] = useState(false);
 
   /* ── Recording / File ── */
-  const [result, setResult]             = useState<any>(null);
+  const [result, setResult] = useState<any>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [countdown, setCountdown]       = useState(12);
+  const [countdown, setCountdown] = useState(12);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef   = useRef<Blob[]>([]);
-  const fileInputRef     = useRef<HTMLInputElement>(null);
-  const countdownRef     = useRef<NodeJS.Timeout | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const countdownRef = useRef<NodeJS.Timeout | null>(null);
 
-  /* ── Splash animation ── */
-  const [splashAnimated, setSplashAnimated]       = useState(false);
-  const [splashFading, setSplashFading]           = useState(false);
-  const [soundPlayed, setSoundPlayed]             = useState(false);
-  const [showDiagnosticText, setShowDiagnosticText] = useState(false);
-  const [typedText, setTypedText]                 = useState('');
-  const splashAudioCtxRef = useRef<AudioContext | null>(null);
-  const bgControls       = useAnimation();
-  const chevronControls  = useAnimation();
-  const dotControls      = useAnimation();
-  const textControls     = useAnimation();
-  const whiteCircleControls = useAnimation();
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-  const parallaxSpring = { damping: 30, stiffness: 100 };
-  const rotateX = useSpring(useTransform(mouseY, [-0.5, 0.5], [15, -15]), parallaxSpring);
-  const rotateY = useSpring(useTransform(mouseX, [-0.5, 0.5], [-15, 15]), parallaxSpring);
-  const sharpPath  = 'M 30 60 L 50 25 L 50 25 L 70 60 L 58 60 L 50 46 L 50 46 L 42 60 Z';
-  const squarePath = 'M 30 60 L 49.2 26.4 L 50.8 26.4 L 70 60 L 58 60 L 50.8 47.4 L 49.2 47.4 L 42 60 Z';
-
-  /* ── Chat (fully functional) ── */
+  /* ── Chat ── */
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
-  const [chatInput, setChatInput]       = useState('');
+  const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const chatEndRef   = useRef<HTMLDivElement>(null);
-  const chatInitRef  = useRef(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInitRef = useRef(false);
 
-  /* ────────────────────────────────────
-     SPLASH HANDLERS
-  ──────────────────────────────────── */
-  const handleSplashMouseMove = (e: React.MouseEvent) => {
-    if (!splashAnimated) return;
-    mouseX.set(e.clientX / window.innerWidth  - 0.5);
-    mouseY.set(e.clientY / window.innerHeight - 0.5);
-  };
+  const effectiveGoal = showCustomGoal ? customGoal : analysisGoal;
 
-  useEffect(() => {
-    if (!showDiagnosticText) return;
-    let i = 0;
-    const text = 'SONIC DIAGNOSTIC';
-    const interval = setInterval(() => {
-      setTypedText(text.slice(0, i + 1));
-      if (splashAudioCtxRef.current) {
-        const ctx = splashAudioCtxRef.current;
-        if (ctx.state === 'suspended') ctx.resume();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(4000, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1000, ctx.currentTime + 0.015);
-        gain.gain.setValueAtTime(0, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.03, ctx.currentTime + 0.002);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.02);
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.02);
-      }
-      i++;
-      if (i >= text.length) clearInterval(interval);
-    }, 45);
-    return () => clearInterval(interval);
-  }, [showDiagnosticText]);
-
-  const playSplashSound = () => {
-    if (soundPlayed) return;
-    setSoundPlayed(true);
-    if (!splashAudioCtxRef.current) {
-      const AC = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AC) return;
-      splashAudioCtxRef.current = new AC();
-    }
-    const ctx = splashAudioCtxRef.current;
-    if (ctx.state === 'suspended') ctx.resume();
-    const t = ctx.currentTime;
-    const subOsc = ctx.createOscillator();
-    subOsc.type = 'sine'; subOsc.frequency.setValueAtTime(55, t);
-    const subGain = ctx.createGain();
-    subGain.gain.setValueAtTime(0, t);
-    subGain.gain.linearRampToValueAtTime(0.3, t + 0.8);
-    subGain.gain.exponentialRampToValueAtTime(0.001, t + 3.5);
-    subOsc.connect(subGain); subGain.connect(ctx.destination);
-    subOsc.start(t); subOsc.stop(t + 3.5);
-    [440.0, 554.37, 659.25, 830.61, 987.77].forEach((freq, idx) => {
-      const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.setValueAtTime(freq, t);
-      const gain = ctx.createGain(); gain.gain.setValueAtTime(0, t);
-      const at = t + 0.1 + idx * 0.08;
-      gain.gain.linearRampToValueAtTime(0.04, at);
-      gain.gain.exponentialRampToValueAtTime(0.001, at + 2.5);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(t); osc.stop(t + 3.5);
-    });
-    const pt = t + 0.9;
-    const pingOsc = ctx.createOscillator(); pingOsc.type = 'sine'; pingOsc.frequency.setValueAtTime(1760, pt);
-    const pingGain = ctx.createGain(); pingGain.gain.setValueAtTime(0, pt);
-    pingGain.gain.linearRampToValueAtTime(0.15, pt + 0.01);
-    pingGain.gain.exponentialRampToValueAtTime(0.001, pt + 1.5);
-    pingOsc.connect(pingGain); pingGain.connect(ctx.destination);
-    pingOsc.start(pt); pingOsc.stop(pt + 1.5);
-  };
-
-  /* ────────────────────────────────────
-     DATA FETCHING
-  ──────────────────────────────────── */
+  /* ── Data fetching ── */
   const fetchUserData = useCallback(async () => {
     if (!isSignedIn) { setDiagnosisHistory([]); setCredits(null); return; }
     setIsFetchingHistory(true);
@@ -178,24 +83,15 @@ export default function SonicDiagnostic() {
 
   useEffect(() => { if (isLoaded) fetchUserData(); }, [isLoaded, isSignedIn, fetchUserData]);
 
-  /* ────────────────────────────────────
-     STRIPE
-  ──────────────────────────────────── */
+  /* ── Stripe ── */
   const handleBuyCredits = async (packageId: '5_credits' | '15_credits') => {
     try {
       setIsRedirectingToStripe(true);
-      const res = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageId }),
-      });
+      const res = await fetch('/api/stripe/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packageId }) });
       if (!res.ok) throw new Error('Checkout failed');
       const { url } = await res.json();
       window.location.href = url;
-    } catch {
-      alert('Wystąpił błąd płatności. Spróbuj ponownie.');
-      setIsRedirectingToStripe(false);
-    }
+    } catch { alert('Błąd płatności.'); setIsRedirectingToStripe(false); }
   };
 
   useEffect(() => {
@@ -211,127 +107,62 @@ export default function SonicDiagnostic() {
     }
   }, [fetchUserData, isSignedIn, user]);
 
-  useEffect(() => {
-    if (!toastMessage) return;
-    const t = setTimeout(() => setToastMessage(null), 5000);
-    return () => clearTimeout(t);
-  }, [toastMessage]);
+  useEffect(() => { if (!toastMessage) return; const t = setTimeout(() => setToastMessage(null), 5000); return () => clearTimeout(t); }, [toastMessage]);
 
-  /* ────────────────────────────────────
-     SPLASH EFFECT
-  ──────────────────────────────────── */
-  useEffect(() => {
-    const runSplash = async () => {
-      setSplashAnimated(true);
-      playSplashSound();
-      textControls.start({ opacity: 0, scale: 0.9, transition: { duration: 0.5 } });
-      whiteCircleControls.start({ scale: 0, transition: { duration: 1.2, ease: [0.4, 0, 0.2, 1] } });
-      bgControls.start({ backgroundColor: '#0B1117', transition: { duration: 1.5, ease: [0.4, 0, 0.2, 1] } });
-      chevronControls.start({
-        d: squarePath, y: 0, scale: 1, fill: '#00C2FF',
-        filter: 'drop-shadow(0px 0px 25px rgba(0, 194, 255, 0.8))',
-        transition: { duration: 1.2, ease: [0.34, 1.56, 0.64, 1] },
-      });
-      await dotControls.start({
-        y: [-40, 0], scale: [0, 1.3, 1], opacity: [0, 1, 1], rx: [4, 4, 3.2],
-        filter: [
-          'drop-shadow(0px 0px 0px rgba(255,255,255,0))',
-          'drop-shadow(0px 0px 40px rgba(255,255,255,1))',
-          'drop-shadow(0px 0px 15px rgba(255,255,255,0.8))',
-        ],
-        transition: { delay: 0.9, duration: 0.8, times: [0, 0.6, 1], ease: 'easeOut' },
-      });
-      setTimeout(() => setShowDiagnosticText(true), 150);
-      chevronControls.start({ y: [0, -6, 0], transition: { duration: 4, repeat: Infinity, ease: 'easeInOut' } });
-      dotControls.start({ y: [0, -3, 0], transition: { duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 0.2 } });
-      setTimeout(() => setSplashFading(true), 3800);
-      setTimeout(() => setShowSplash(false), 4600);
-    };
-    runSplash();
-    const unlock = () => {
-      if (splashAudioCtxRef.current) splashAudioCtxRef.current.resume().then(playSplashSound);
-      else playSplashSound();
-      window.removeEventListener('mousedown', unlock);
-      window.removeEventListener('keydown', unlock);
-      window.removeEventListener('touchstart', unlock);
-    };
-    window.addEventListener('mousedown', unlock);
-    window.addEventListener('keydown', unlock);
-    window.addEventListener('touchstart', unlock);
-    return () => {
-      window.removeEventListener('mousedown', unlock);
-      window.removeEventListener('keydown', unlock);
-      window.removeEventListener('touchstart', unlock);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ────────────────────────────────────
-     RECORDING
-  ──────────────────────────────────── */
+  /* ── Recording ── */
   const startRecording = useCallback(async () => {
     if (credits !== null && credits < 1) { setShowCreditModal(true); return; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+      });
       const mr = new MediaRecorder(stream);
       mediaRecorderRef.current = mr;
       audioChunksRef.current = [];
       setCountdown(12);
-
       mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       mr.onstop = async () => {
         const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
         const fd = new FormData();
         fd.append('file', blob, 'recording.webm');
-        fd.append('category', category); fd.append('makeModel', makeModel); fd.append('symptoms', symptoms);
+        fd.append('analysisGoal', effectiveGoal);
+        fd.append('marka', marka); fd.append('model', model);
+        fd.append('rokProdukcji', rokProdukcji); fd.append('przebieg', przebieg);
+        fd.append('typPaliwa', typPaliwa); fd.append('symptoms', symptoms);
         setScannerState('processing');
         const diag = await analyzeMedia(fd);
         if (diag?.error === 'OUT_OF_CREDITS') { setShowCreditModal(true); setScannerState('idle'); return; }
-        setResult(diag);
-        setScannerState('idle');
-        setShowResults(true);
-        if (diag?.chat_opener) {
-          setChatMessages([{ role: 'model', content: diag.chat_opener }]);
-          chatInitRef.current = true;
-        }
+        setResult(diag); setScannerState('idle'); setShowResults(true);
+        if (diag?.chat_opener) { setChatMessages([{ role: 'model', content: diag.chat_opener }]); chatInitRef.current = true; }
         fetchUserData();
       };
-
-      mr.start();
-      setScannerState('recording');
+      mr.start(); setScannerState('recording');
       let sec = 12;
-      countdownRef.current = setInterval(() => {
-        sec--; setCountdown(sec);
-        if (sec <= 0 && countdownRef.current) clearInterval(countdownRef.current);
-      }, 1000);
-      setTimeout(() => {
-        if (mr.state !== 'inactive') { mr.stop(); stream.getTracks().forEach(t => t.stop()); setScannerState('processing'); }
-        if (countdownRef.current) clearInterval(countdownRef.current);
-      }, 12000);
-    } catch { alert('Błąd mikrofonu. Sprawdź uprawnienia.'); }
-  }, [category, makeModel, symptoms, credits, fetchUserData]);
+      countdownRef.current = setInterval(() => { sec--; setCountdown(sec); if (sec <= 0 && countdownRef.current) clearInterval(countdownRef.current); }, 1000);
+      setTimeout(() => { if (mr.state !== 'inactive') { mr.stop(); stream.getTracks().forEach(t => t.stop()); setScannerState('processing'); } if (countdownRef.current) clearInterval(countdownRef.current); }, 12000);
+    } catch { alert('Błąd mikrofonu.'); }
+  }, [marka, model, rokProdukcji, przebieg, typPaliwa, symptoms, credits, fetchUserData, effectiveGoal]);
 
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
-    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') { mediaRecorderRef.current.stop(); mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop()); }
     if (countdownRef.current) clearInterval(countdownRef.current);
     setScannerState('idle');
   }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     setUploadedFile(file); setScannerState('fileReady');
+    if (!marka && !symptoms) { setPendingAction('analyze'); setShowContextSheet(true); }
   };
 
   const analyzeUploadedFile = async () => {
     if (!uploadedFile) return;
     if (credits !== null && credits < 1) { setShowCreditModal(true); return; }
     const fd = new FormData();
-    fd.append('file', uploadedFile); fd.append('category', category);
-    fd.append('makeModel', makeModel); fd.append('symptoms', symptoms);
+    fd.append('file', uploadedFile); fd.append('analysisGoal', effectiveGoal);
+    fd.append('marka', marka); fd.append('model', model);
+    fd.append('rokProdukcji', rokProdukcji); fd.append('przebieg', przebieg);
+    fd.append('typPaliwa', typPaliwa); fd.append('symptoms', symptoms);
     setScannerState('processing');
     const diag = await analyzeMedia(fd);
     if (diag?.error === 'OUT_OF_CREDITS') { setShowCreditModal(true); setScannerState('idle'); setUploadedFile(null); return; }
@@ -340,203 +171,80 @@ export default function SonicDiagnostic() {
     fetchUserData();
   };
 
-  const resetScan = () => {
-    setShowResults(false); setResult(null); setUploadedFile(null); setScannerState('idle');
-    fetchUserData();
-  };
+  const resetScan = () => { setShowResults(false); setResult(null); setUploadedFile(null); setScannerState('idle'); fetchUserData(); };
 
-  /* ────────────────────────────────────
-     CHAT
-  ──────────────────────────────────── */
+  /* ── Chat ── */
   const activeContext = result
-    ? `Maszyna: ${category} ${makeModel}. Objawy: ${symptoms}. Diagnoza: ${result.diagnosis_title} (${result.severity}, pewność ${result.confidence_score}%). Wyjaśnienie: ${result.human_explanation}`
+    ? `Auto: ${marka} ${model}. Objawy: ${symptoms}. Diagnoza: ${result.diagnosis_title} (${result.severity}, ${result.confidence_score}%). Wyjaśnienie: ${result.human_explanation}`
     : undefined;
 
-  /* Init greeting when chat tab is first opened */
-  useEffect(() => {
-    if (activeTab === 'chat' && !chatInitRef.current) {
-      chatInitRef.current = true;
-      setChatMessages([{
-        role: 'model',
-        content: result
-          ? (result.chat_opener || `Przeanalizowałem Twoją maszynę. Wykryto: **${result.diagnosis_title}**. Masz pytania?`)
-          : 'Cześć! Jestem Twoim AI mechanikiem. Nagraj dźwięk maszyny lub zadaj pytanie — postaram się pomóc.',
-      }]);
-    }
-  }, [activeTab, result]);
-
-  /* Auto-scroll */
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, isChatLoading]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, isChatLoading]);
 
   const sendChatMessage = useCallback(async () => {
-    const msg = chatInput.trim();
-    if (!msg || isChatLoading) return;
+    const msg = chatInput.trim(); if (!msg || isChatLoading) return;
     setChatInput('');
     const updated: ChatMsg[] = [...chatMessages, { role: 'user', content: msg }];
-    setChatMessages(updated);
-    setIsChatLoading(true);
+    setChatMessages(updated); setIsChatLoading(true);
     try {
       const res = await askMechanic(updated, activeContext, diagnosisHistory);
-      setChatMessages(prev => [...prev, {
-        role: 'model',
-        content: res.error ? res.error : (res.content ?? '…'),
-      }]);
-    } catch {
-      setChatMessages(prev => [...prev, { role: 'model', content: 'Przepraszam, wystąpił błąd połączenia.' }]);
-    } finally { setIsChatLoading(false); }
-  }, [chatInput, chatMessages, isChatLoading, activeContext]);
+      setChatMessages(prev => [...prev, { role: 'model', content: res.error ? res.error : (res.content ?? '…') }]);
+    } catch { setChatMessages(prev => [...prev, { role: 'model', content: 'Przepraszam, wystąpił błąd.' }]); }
+    finally { setIsChatLoading(false); }
+  }, [chatInput, chatMessages, isChatLoading, activeContext, diagnosisHistory]);
 
   const isListening = scannerState === 'recording' || scannerState === 'processing';
 
-  /* ════════════════════════════════════════════════════════════
-     SPLASH SCREEN
-     ════════════════════════════════════════════════════════════ */
-  if (showSplash) {
-    return (
-      <motion.div
-        className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden z-50 bg-[#0B1117]"
-        initial={{ opacity: 1 }}
-        animate={{ opacity: splashFading ? 0 : 1 }}
-        transition={{ opacity: { duration: 0.8, ease: 'easeInOut' } }}
-        onMouseMove={handleSplashMouseMove}
-      >
-        <motion.div
-          className="absolute rounded-full bg-[#E0F7FF] pointer-events-none"
-          initial={{ scale: 30, width: '100vmax', height: '100vmax', filter: 'blur(8px)' }}
-          animate={whiteCircleControls}
-          style={{ transformOrigin: 'center center', boxShadow: '0 0 100px 40px rgba(59,130,246,0.3)', top: '50%', left: '50%', x: '-50%', y: 'calc(-50% + 22px)' }}
-        />
-        <motion.div
-          className="absolute inset-0 pointer-events-none"
-          initial={{ opacity: 0 }} animate={{ opacity: splashAnimated ? 1 : 0 }} transition={{ duration: 2 }}
-          style={{ background: 'radial-gradient(circle at 50% 50%, rgba(0,194,255,0.04) 0%, transparent 60%)' }}
-        />
-        <div style={{ perspective: 1200 }} className="relative z-10 flex flex-col items-center">
-          <motion.div style={{ rotateX, rotateY, transformStyle: 'preserve-3d' }} className="relative flex items-center justify-center">
-            <svg viewBox="0 0 100 100" className="w-64 h-64 md:w-80 md:h-80 overflow-visible">
-              <motion.path
-                initial={{ d: sharpPath, y: 20, scale: 0.95, fill: '#4285F4', filter: 'drop-shadow(0px 0px 0px rgba(0,194,255,0))' }}
-                animate={chevronControls}
-                strokeLinejoin="round" strokeLinecap="round"
-                style={{ transformOrigin: '50% 50%' }}
-              />
-              <motion.rect x="46" y="68" width="8" height="8" fill="#FFFFFF"
-                initial={{ opacity: 0, scale: 0, y: -20, rx: 4 }}
-                animate={dotControls}
-                style={{ transformOrigin: '50% 72px' }}
-              />
-            </svg>
-          </motion.div>
-          <div className="absolute -bottom-8 md:-bottom-12 h-6 flex items-center justify-center pointer-events-none">
-            <span className="font-sans text-[10px] md:text-xs font-semibold tracking-[0.4em] text-[#8A9BA8] uppercase">
-              {typedText}
-              {showDiagnosticText && typedText.length < 'SONIC DIAGNOSTIC'.length && (
-                <motion.span
-                  className="inline-block w-1.5 h-3 bg-[#8A9BA8] ml-1 align-middle"
-                  animate={{ opacity: [1, 0] }}
-                  transition={{ duration: 0.4, repeat: Infinity, repeatType: 'reverse' }}
-                />
-              )}
-            </span>
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
+  /* ── SPLASH ── */
+  if (showSplash) return <SplashScreen onComplete={() => setShowSplash(false)} />;
 
-  /* ════════════════════════════════════════════════════════════
-     RECORDING / PROCESSING FULLSCREEN
-     ════════════════════════════════════════════════════════════ */
+  /* ── RECORDING/PROCESSING FULLSCREEN ── */
   if (isListening) {
     return (
       <div className="fixed inset-0 overflow-hidden flex items-center justify-center" style={{ background: 'var(--background)' }}>
         <div className="app-container relative w-full h-full flex flex-col items-center justify-center">
-
-          {/* Close button */}
-          <motion.button
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
-            onClick={stopRecording}
-            className="absolute top-12 left-5 z-20 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
-            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
+          <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
+            onClick={stopRecording} className="absolute top-12 left-5 z-20 w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}>
             <X className="w-4 h-4 text-white/60" />
           </motion.button>
-
-          {/* Rings */}
           <div className="relative flex items-center justify-center">
-            {scannerState === 'recording' && (
-              <>
-                {[0, 0.7, 1.4].map((delay, i) => (
-                  <motion.div
-                    key={`pulse-${i}`}
-                    className="absolute rounded-full"
-                    style={{ width: 200, height: 200, border: '1px solid rgba(0,212,255,0.15)' }}
-                    initial={{ scale: 1, opacity: 0.5 }}
-                    animate={{ scale: 3.8 + i * 0.35, opacity: 0 }}
-                    transition={{ repeat: Infinity, duration: 3.2, delay, ease: 'easeOut' }}
-                  />
-                ))}
-              </>
-            )}
-
-            <motion.div className="absolute rounded-full shazam-ring ring-recording-5" animate={scannerState === 'recording' ? { scale: [1, 1.015, 1] } : {}} transition={{ repeat: Infinity, duration: 3.5, ease: 'easeInOut' }} />
-            <motion.div className="absolute rounded-full shazam-ring ring-recording-4" animate={scannerState === 'recording' ? { scale: [1, 1.02, 1] } : {}}  transition={{ repeat: Infinity, duration: 2.8, ease: 'easeInOut', delay: 0.2 }} />
-            <motion.div className="absolute rounded-full shazam-ring ring-recording-3" animate={scannerState === 'recording' ? { scale: [1, 1.03, 1] } : {}}  transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut', delay: 0.4 }} />
-            <motion.div className="absolute rounded-full shazam-ring ring-recording-2" animate={scannerState === 'recording' ? { scale: [1, 1.04, 1] } : {}}  transition={{ repeat: Infinity, duration: 1.8, ease: 'easeInOut', delay: 0.3 }} />
-            <motion.div className="absolute rounded-full shazam-ring ring-recording-1" animate={scannerState === 'recording' ? { scale: [1, 1.05, 1] } : {}}  transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut', delay: 0.1 }} />
-
-            {/* Center circle */}
-            <motion.div
-              className="relative z-10 w-[164px] h-[164px] rounded-full flex items-center justify-center"
-              style={{
-                background: 'radial-gradient(circle at 38% 32%, rgba(0,80,140,0.9), rgba(6,13,20,0.98))',
-                boxShadow: scannerState === 'recording'
-                  ? '0 0 0 1px rgba(0,212,255,0.2), 0 0 60px rgba(0,212,255,0.18), inset 0 1px 0 rgba(255,255,255,0.08)'
-                  : '0 0 0 1px rgba(255,255,255,0.07), 0 0 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)',
-              }}
+            {scannerState === 'recording' && [0, 0.7, 1.4].map((delay, i) => (
+              <motion.div key={`pulse-${i}`} className="absolute rounded-full"
+                style={{ width: 200, height: 200, border: '1px solid rgba(0,212,255,0.15)' }}
+                initial={{ scale: 1, opacity: 0.5 }} animate={{ scale: 3.8 + i * 0.35, opacity: 0 }}
+                transition={{ repeat: Infinity, duration: 3.2, delay, ease: 'easeOut' }} />
+            ))}
+            {['ring-recording-5','ring-recording-4','ring-recording-3','ring-recording-2','ring-recording-1'].map((cls, i) => (
+              <motion.div key={cls} className={`absolute rounded-full shazam-ring ${cls}`}
+                animate={scannerState === 'recording' ? { scale: [1, 1.015 + i*0.005, 1] } : {}}
+                transition={{ repeat: Infinity, duration: 3.5 - i*0.4, ease: 'easeInOut', delay: i*0.1 }} />
+            ))}
+            <motion.div className="relative z-10 w-[164px] h-[164px] rounded-full flex items-center justify-center"
+              style={{ background: 'radial-gradient(circle at 38% 32%, rgba(0,80,140,0.9), rgba(6,13,20,0.98))',
+                boxShadow: scannerState === 'recording' ? '0 0 0 1px rgba(0,212,255,0.2), 0 0 60px rgba(0,212,255,0.18)' : '0 0 0 1px rgba(255,255,255,0.07), 0 0 40px rgba(0,0,0,0.6)' }}
               animate={scannerState === 'processing' ? { scale: [1, 0.94, 1] } : { scale: [1, 1.03, 1] }}
-              transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
-            >
+              transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}>
               {scannerState === 'processing' ? (
-                <motion.div
-                  className="w-9 h-9 rounded-full border-t-[#00d4ff]"
-                  style={{ border: '2px solid rgba(0,212,255,0.15)', borderTopColor: '#00d4ff' }}
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }}
-                />
+                <motion.div className="w-9 h-9 rounded-full" style={{ border: '2px solid rgba(0,212,255,0.15)', borderTopColor: '#00d4ff' }}
+                  animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.9, ease: 'linear' }} />
               ) : (
                 <Image src="/logo.png" alt="Sonic" width={76} height={76} className="opacity-90" />
               )}
             </motion.div>
           </div>
-
-          {/* Equalizer */}
           <motion.div className="flex items-end gap-[4px] mt-14" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.35 }}>
             {[0, 0.12, 0.24, 0.36, 0.48].map((d, i) => (
               <div key={i} className="eq-bar eq-bar-cyan" style={{ animationDelay: `${d}s`, height: '20px' }} />
             ))}
           </motion.div>
-
-          {/* Text */}
           <motion.div className="text-center mt-7" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, ...springSmooth }}>
             <h2 className="text-[22px] font-bold text-white tracking-tight leading-none mb-2">
               {scannerState === 'processing' ? 'Analiza AI…' : 'Nasłuchiwanie'}
             </h2>
-            <p className="text-sm text-white/28 max-w-[240px] mx-auto leading-relaxed">
-              {scannerState === 'processing'
-                ? 'Anto-Lab analizuje nagranie…'
-                : 'Zbliż mikrofon do źródła dźwięku'}
-            </p>
+            <p className="text-sm text-white/28 max-w-[240px] mx-auto">{scannerState === 'processing' ? 'Anto-Lab analizuje nagranie…' : 'Zbliż mikrofon do źródła dźwięku'}</p>
             {scannerState === 'recording' && (
-              <motion.div
-                className="mt-5 flex items-center justify-center gap-2"
-                key={countdown}
-                initial={{ scale: 1.15, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ duration: 0.18 }}
-              >
+              <motion.div className="mt-5 flex items-center justify-center gap-2" key={countdown}
+                initial={{ scale: 1.15, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 <span className="text-3xl font-bold text-white tabular-nums">{countdown}</span>
                 <span className="text-white/25 text-lg font-light">s</span>
@@ -548,306 +256,226 @@ export default function SonicDiagnostic() {
     );
   }
 
-  /* ════════════════════════════════════════════════════════════
-     MAIN APP SHELL
-     ════════════════════════════════════════════════════════════ */
+  /* ════════════════════ MAIN APP SHELL ════════════════════ */
   return (
-    <div className="fixed inset-0 overflow-hidden flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(0,50,100,0.35), var(--background) 65%)' }}>
+    <div className="fixed inset-0 overflow-hidden flex items-center justify-center" style={{ backgroundColor: '#040B16' }}>
       <div className="app-container">
-
-        {/* ── TOP HEADER ── */}
-        <div className="shrink-0 flex items-center justify-between px-5 py-3" style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 14px)' }}>
-          {/* Settings gear icon — top left */}
-          <motion.button
-            onClick={() => setActiveTab('settings')}
-            whileTap={{ scale: 0.88 }}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
-            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <Settings className="w-4 h-4 text-white/50" />
-          </motion.button>
-
+        {/* TOP HEADER */}
+        <div className="shrink-0 flex items-center justify-between px-6 py-4" style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 16px)' }}>
+          <button onClick={() => { setActiveTab('settings'); setShowResults(false); }} className="w-[38px] h-[38px] rounded-full flex items-center justify-center hover:bg-white/10"
+            style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <Settings className="w-5 h-5 text-white/90" />
+          </button>
           <div className="flex items-center gap-2.5">
             <SignedIn>
               {credits !== null && (
-                <motion.button
-                  onClick={() => setShowCreditModal(true)}
-                  whileTap={{ scale: 0.94 }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all"
-                  style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}
-                >
-                  <Zap className="w-3 h-3 text-[#f59e0b]" />
-                  <span className="text-[11px] text-[#f59e0b] font-bold tabular-nums">{credits}</span>
+                <motion.button onClick={() => setShowCreditModal(true)} whileTap={{ scale: 0.94 }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                  style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
+                  <Zap className="w-3 h-3 text-[#f59e0b]" /><span className="text-[11px] text-[#f59e0b] font-bold tabular-nums">{credits}</span>
                 </motion.button>
               )}
               <UserButton appearance={{ elements: { avatarBox: 'w-8 h-8' } }} />
             </SignedIn>
             <SignedOut>
               <SignInButton mode="modal">
-                <button className="px-4 py-1.5 rounded-full text-xs font-medium text-white/60 transition-colors hover:text-white/80"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  Zaloguj
-                </button>
+                <button className="px-4 py-1.5 rounded-full text-xs font-medium text-white/60 hover:text-white/80"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>Zaloguj</button>
               </SignInButton>
             </SignedOut>
           </div>
         </div>
 
-        {/* ── CONTENT AREA ── */}
+        {/* CONTENT AREA */}
         <div className="flex-1 overflow-hidden relative">
           <AnimatePresence mode="wait">
-
-            {/* ══════════ HOME ══════════ */}
+            {/* HOME TAB */}
             {activeTab === 'home' && !showResults && (
-              <motion.div
-                key="home"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                className="absolute inset-0 flex flex-col"
-              >
-                {/* Scan centerpiece */}
-                <div className="flex-1 flex flex-col items-center justify-center px-5">
+              <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.22 }} className="absolute inset-0 flex flex-col">
+                <div className="flex-1 flex flex-col items-center justify-center px-5 -mt-6">
+                  <motion.h2 className="text-[26px] font-bold text-white tracking-tight leading-none mb-4"
+                    initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>Tap to Sonic</motion.h2>
+
+                  {/* Analysis Goal Selector */}
+                  <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+                    className="flex flex-wrap justify-center gap-2 mb-6 max-w-[340px]">
+                    {ANALYSIS_GOALS.map(g => (
+                      <button key={g} onClick={() => { setAnalysisGoal(g); setShowCustomGoal(false); }}
+                        className="px-3 py-1.5 rounded-full text-[11px] font-medium transition-all"
+                        style={analysisGoal === g && !showCustomGoal
+                          ? { background: 'rgba(0,212,255,0.12)', color: '#00d4ff', border: '1px solid rgba(0,212,255,0.3)' }
+                          : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {g}
+                      </button>
+                    ))}
+                    <button onClick={() => setShowCustomGoal(!showCustomGoal)}
+                      className="px-3 py-1.5 rounded-full text-[11px] font-medium transition-all"
+                      style={showCustomGoal
+                        ? { background: 'rgba(0,212,255,0.12)', color: '#00d4ff', border: '1px solid rgba(0,212,255,0.3)' }
+                        : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      Inne…
+                    </button>
+                  </motion.div>
+                  <AnimatePresence>
+                    {showCustomGoal && (
+                      <motion.input initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                        type="text" value={customGoal} onChange={e => setCustomGoal(e.target.value)}
+                        placeholder="Wpisz cel analizy…"
+                        className="w-full max-w-[300px] text-[13px] text-white/88 rounded-xl px-4 py-3 mb-4 outline-none placeholder:text-white/28 input-glow"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(0,212,255,0.2)' }} />
+                    )}
+                  </AnimatePresence>
 
                   {/* Ring system + button */}
                   <div className="relative flex items-center justify-center">
                     <div className="absolute rounded-full shazam-ring ring-idle-3" />
                     <div className="absolute rounded-full shazam-ring ring-idle-2" />
                     <div className="absolute rounded-full shazam-ring ring-idle-1" />
-
                     <motion.button
-                      onClick={scannerState === 'idle' ? startRecording : scannerState === 'fileReady' ? analyzeUploadedFile : undefined}
-                      className="relative z-10 w-[176px] h-[176px] rounded-full flex flex-col items-center justify-center"
-                      style={{
-                        background: scannerState === 'fileReady'
-                          ? 'radial-gradient(circle at 38% 32%, rgba(0,80,60,0.9), rgba(6,13,20,0.97))'
-                          : 'radial-gradient(circle at 38% 32%, rgba(10,30,55,0.95), rgba(6,13,20,0.98))',
-                        boxShadow: scannerState === 'fileReady'
-                          ? '0 0 0 1px rgba(16,185,129,0.3), 0 24px 64px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08)'
-                          : '0 0 0 1px rgba(255,255,255,0.07), 0 24px 64px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)',
+                      onClick={() => {
+                        if (scannerState === 'idle') {
+                          if (!marka && !symptoms) { setPendingAction('record'); setShowContextSheet(true); }
+                          else startRecording();
+                        } else if (scannerState === 'fileReady') {
+                          if (!marka && !symptoms) { setPendingAction('analyze'); setShowContextSheet(true); }
+                          else analyzeUploadedFile();
+                        }
                       }}
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.95 }}
-                      transition={springBouncy}
-                    >
+                      className="relative z-10 w-[200px] h-[200px] rounded-full flex flex-col items-center justify-center"
+                      style={{ background: 'rgba(255,255,255,0.04)', backdropFilter: 'blur(24px)',
+                        boxShadow: '0 0 0 1px rgba(255,255,255,0.12), 0 24px 64px rgba(0,0,0,0.4)' }}
+                      whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.95 }} transition={springBouncy}>
                       {scannerState === 'fileReady' ? (
                         <div className="flex flex-col items-center gap-2">
-                          <Zap className="w-10 h-10 text-[#10b981]" style={{ filter: 'drop-shadow(0 0 10px rgba(16,185,129,0.5))' }} />
-                          <span className="text-[10px] text-[#10b981] font-bold tracking-[0.2em] uppercase">Analizuj</span>
+                          <Zap className="w-12 h-12 text-[#10b981]" style={{ filter: 'drop-shadow(0 0 10px rgba(16,185,129,0.5))' }} />
+                          <span className="text-[12px] text-[#10b981] font-bold tracking-[0.2em] uppercase mt-2">Analizuj</span>
                         </div>
                       ) : (
-                        <Image src="/logo.png" alt="Sonic" width={78} height={78} className="opacity-85" />
+                        <Image src="/logo.png" alt="Sonic" width={82} height={82} style={{ filter: 'brightness(0) invert(1)', opacity: 0.95 }} />
                       )}
                     </motion.button>
                   </div>
 
-                  {/* Hint label */}
-                  <motion.p
-                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
-                    className="text-[13px] text-white/28 font-medium tracking-wide mt-6 mb-5"
-                  >
-                    {scannerState === 'fileReady' ? 'Plik gotowy — dotknij aby analizować' : 'Dotknij aby nagrać dźwięk'}
-                  </motion.p>
-
                   {/* Action pills */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-                    className="flex gap-2.5"
-                  >
+                  <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="flex gap-2.5 mt-1">
                     <input type="file" accept="video/*,audio/*,image/*" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-                    <motion.button
-                      onClick={() => fileInputRef.current?.click()}
-                      whileTap={{ scale: 0.95 }}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-full transition-all"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      <Upload className="w-3.5 h-3.5 text-white/35" />
-                      <span className="text-[12px] text-white/45 font-medium">Upload</span>
+                    <motion.button onClick={() => fileInputRef.current?.click()} whileTap={{ scale: 0.95 }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-full"
+                      style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.13)' }}>
+                      <Upload className="w-3.5 h-3.5 text-white/60" /><span className="text-[12px] text-white/68 font-medium">Upload</span>
                     </motion.button>
-                    <motion.button
-                      onClick={() => setShowContextSheet(true)}
-                      whileTap={{ scale: 0.95 }}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-full transition-all"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      <FileText className="w-3.5 h-3.5 text-[#f59e0b]/55" />
-                      <span className="text-[12px] text-white/45 font-medium">Kontekst</span>
-                      {(makeModel || symptoms) && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]" style={{ filter: 'drop-shadow(0 0 4px rgba(245,158,11,0.8))' }} />
-                      )}
+                    <motion.button onClick={() => { setPendingAction(null); setShowContextSheet(true); }} whileTap={{ scale: 0.95 }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-full"
+                      style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.13)' }}>
+                      <FileText className="w-3.5 h-3.5 text-[#f59e0b]/75" /><span className="text-[12px] text-white/68 font-medium">Kontekst</span>
+                      {(marka || symptoms) && <div className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]" style={{ filter: 'drop-shadow(0 0 4px rgba(245,158,11,0.8))' }} />}
                     </motion.button>
                   </motion.div>
 
                   {/* Uploaded file chip */}
                   <AnimatePresence>
                     {uploadedFile && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 5, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+                      <motion.div initial={{ opacity: 0, y: 5, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
                         className="mt-3.5 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl"
-                        style={{ background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.18)' }}
-                      >
+                        style={{ background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.18)' }}>
                         <FileAudio className="w-3.5 h-3.5 text-[#10b981]" />
                         <span className="text-[11px] text-white/55 truncate max-w-[170px]">{uploadedFile.name}</span>
                         <button onClick={() => { setUploadedFile(null); setScannerState('idle'); }} className="ml-auto shrink-0">
-                          <X className="w-3 h-3 text-white/20 hover:text-white/50 transition-colors" />
+                          <X className="w-3 h-3 text-white/20 hover:text-white/50" />
                         </button>
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </div>
 
-                {/* Recent scan card */}
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
-                  className="shrink-0 px-5 pb-4"
-                >
-                  <p className="text-[9px] text-white/18 font-semibold uppercase tracking-[0.14em] mb-2.5">Ostatni Skan</p>
-                  {diagnosisHistory.length > 0 ? (
-                    <motion.button
-                      onClick={() => setActiveTab('history')}
-                      whileTap={{ scale: 0.99 }}
-                      className="w-full flex items-center gap-3.5 p-3.5 rounded-2xl text-left transition-all"
-                      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-                    >
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0
-                        ${diagnosisHistory[0].severity === 'CRITICAL' ? 'bg-red-500/10' : diagnosisHistory[0].severity === 'SAFE' ? 'bg-[#10b981]/10' : 'bg-[#f59e0b]/10'}`}>
-                        <FileAudio className={`w-4 h-4 ${diagnosisHistory[0].severity === 'CRITICAL' ? 'text-red-400' : diagnosisHistory[0].severity === 'SAFE' ? 'text-[#10b981]' : 'text-[#f59e0b]'}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-semibold text-white/75 truncate">{diagnosisHistory[0].diagnosisTitle}</p>
-                        <p className="text-[10px] text-white/30 mt-0.5">
-                          {new Date(diagnosisHistory[0].createdAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })} · {diagnosisHistory[0].confidenceScore}% pewności
-                        </p>
-                      </div>
-                      <ChevronRight className="w-3.5 h-3.5 text-white/18 shrink-0" />
-                    </motion.button>
+                {/* Recently Found */}
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="shrink-0 w-full pl-5 pb-5">
+                  <p className="text-[15px] font-semibold text-white/70 mb-3">Recently Found</p>
+                  {diagnosisHistory.filter(d => d.machineCategory === 'Auto').length > 0 ? (
+                    <div className="flex overflow-x-auto gap-3.5 pr-5 pb-3 snap-x snap-mandatory scrollbar-hide">
+                      {diagnosisHistory.filter(d => d.machineCategory === 'Auto').slice(0, 5).map(item => (
+                        <motion.button key={item.id} onClick={() => setActiveTab('chat')} whileTap={{ scale: 0.97 }}
+                          className="flex items-center gap-3.5 p-3.5 rounded-[22px] text-left shrink-0 w-[290px] snap-center"
+                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div className={`w-14 h-14 rounded-[14px] flex items-center justify-center shrink-0 ${item.severity === 'CRITICAL' ? 'bg-red-500/10' : item.severity === 'SAFE' ? 'bg-[#10b981]/10' : 'bg-[#f59e0b]/10'}`}>
+                            <FileAudio className={`w-6 h-6 ${item.severity === 'CRITICAL' ? 'text-red-400' : item.severity === 'SAFE' ? 'text-[#10b981]' : 'text-[#f59e0b]'}`} />
+                          </div>
+                          <div className="flex-1 min-w-0 pr-1">
+                            <p className="text-[15px] font-bold text-white/95 truncate">{item.diagnosisTitle}</p>
+                            <p className="text-[13px] text-white/55 mt-0.5 truncate">{item.makeModel}</p>
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
                   ) : (
-                    <div className="flex items-center gap-3.5 p-3.5 rounded-2xl opacity-35" style={{ border: '1px solid rgba(255,255,255,0.04)' }}>
-                      <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center">
-                        <FileAudio className="w-4 h-4 text-white/20" />
-                      </div>
-                      <p className="text-[12px] text-white/30">
-                        {isSignedIn ? 'Naciśnij logo aby nagrać' : 'Zaloguj się aby zapisywać'}
-                      </p>
+                    <div className="flex items-center gap-3.5 p-3.5 rounded-[22px] opacity-35 mr-5" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                      <div className="w-14 h-14 rounded-[14px] bg-white/5 flex items-center justify-center"><FileAudio className="w-6 h-6 text-white/20" /></div>
+                      <div><p className="text-[14px] font-bold text-white/70">Witaj w Sonic</p><p className="text-[12px] text-white/40 mt-0.5">Twoje wyniki pojawią się tutaj</p></div>
                     </div>
                   )}
                 </motion.div>
               </motion.div>
             )}
 
-            {/* ══════════ RESULTS ══════════ */}
+            {/* RESULTS */}
             {activeTab === 'home' && showResults && result && (
-              <motion.div
-                key="results"
-                initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                transition={springSmooth}
-                className="absolute inset-0 overflow-y-auto"
-              >
+              <motion.div key="results" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={springSmooth} className="absolute inset-0 overflow-y-auto">
                 <div className="px-5 pt-3 pb-6 space-y-3">
                   {result.error ? (
                     <div className="rounded-2xl p-8 text-center mt-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                      <AlertTriangle className="w-9 h-9 text-red-400 mx-auto mb-3" />
-                      <p className="text-sm text-red-300/80">{result.error}</p>
-                      <button onClick={resetScan} className="mt-4 text-[11px] text-white/30 hover:text-white/60 flex items-center gap-1.5 mx-auto transition-colors">
-                        <RefreshCcw className="w-3 h-3" /> Spróbuj ponownie
-                      </button>
+                      <AlertTriangle className="w-9 h-9 text-red-400 mx-auto mb-3" /><p className="text-sm text-red-300/80">{result.error}</p>
+                      <button onClick={resetScan} className="mt-4 text-[11px] text-white/30 hover:text-white/60 flex items-center gap-1.5 mx-auto"><RefreshCcw className="w-3 h-3" /> Ponownie</button>
                     </div>
                   ) : (
                     <>
-                      {/* Header row */}
                       <div className="flex items-center justify-between">
-                        <h2 className="text-[15px] font-bold text-white/75 tracking-tight">Wynik Diagnostyki</h2>
-                        <button onClick={resetScan} className="flex items-center gap-1 text-[10px] text-white/22 hover:text-white/45 font-medium uppercase tracking-wider transition-colors">
+                        <h2 className="text-[16px] font-bold text-white/90 tracking-tight">Wynik Diagnostyki</h2>
+                        <button onClick={resetScan} className="flex items-center gap-1 text-[10px] text-white/22 hover:text-white/45 font-medium uppercase tracking-wider">
                           <RefreshCcw className="w-3 h-3" /> Nowy
                         </button>
                       </div>
-
-                      {/* Main diagnosis card */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04, ...springSmooth }}
-                        className="rounded-2xl p-5"
-                        style={{
-                          background: result.severity === 'CRITICAL'
-                            ? 'linear-gradient(145deg, rgba(239,68,68,0.09), rgba(6,13,20,0.95))'
-                            : result.severity === 'SAFE'
-                            ? 'linear-gradient(145deg, rgba(16,185,129,0.09), rgba(6,13,20,0.95))'
-                            : 'linear-gradient(145deg, rgba(245,158,11,0.09), rgba(6,13,20,0.95))',
-                          border: `1px solid ${result.severity === 'CRITICAL' ? 'rgba(239,68,68,0.2)' : result.severity === 'SAFE' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
-                        }}
-                      >
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04, ...springSmooth }}
+                        className="rounded-2xl p-5" style={{
+                          background: result.severity === 'CRITICAL' ? 'linear-gradient(145deg, rgba(239,68,68,0.09), rgba(6,13,20,0.95))' : result.severity === 'SAFE' ? 'linear-gradient(145deg, rgba(16,185,129,0.09), rgba(6,13,20,0.95))' : 'linear-gradient(145deg, rgba(245,158,11,0.09), rgba(6,13,20,0.95))',
+                          border: `1px solid ${result.severity === 'CRITICAL' ? 'rgba(239,68,68,0.2)' : result.severity === 'SAFE' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}` }}>
                         <div className="flex items-center justify-between mb-3.5">
-                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold tracking-widest uppercase
-                            ${result.severity === 'CRITICAL' ? 'bg-red-500/12 text-red-400' : result.severity === 'SAFE' ? 'bg-[#10b981]/12 text-[#10b981]' : 'bg-[#f59e0b]/12 text-[#f59e0b]'}`}>
-                            {result.severity}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
-                            <span className="text-[11px] text-white/38 font-medium tabular-nums">{result.confidence_score}% pewności</span>
+                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold tracking-widest uppercase ${result.severity === 'CRITICAL' ? 'bg-red-500/12 text-red-400' : result.severity === 'SAFE' ? 'bg-[#10b981]/12 text-[#10b981]' : 'bg-[#f59e0b]/12 text-[#f59e0b]'}`}>{result.severity}</span>
+                          <div className="flex flex-col items-end gap-1.5">
+                            <span className="text-[12px] text-white/65 font-semibold tabular-nums">{result.confidence_score}%</span>
+                            <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.09)' }}>
+                              <div className="h-full rounded-full confidence-bar-fill" style={{ width: `${result.confidence_score}%`, background: result.confidence_score > 75 ? '#10b981' : result.confidence_score > 50 ? '#f59e0b' : '#ef4444' }} />
+                            </div>
                           </div>
                         </div>
-                        <h3 className="text-[20px] font-bold text-white leading-tight mb-2.5">
-                          {result.diagnosis_title || result.diagnosis}
-                        </h3>
-                        <p className="text-[13px] text-white/50 leading-relaxed">{result.human_explanation}</p>
+                        <h3 className="text-[20px] font-bold text-white leading-tight mb-2.5">{result.diagnosis_title}</h3>
+                        <p className="text-[13px] text-white/65 leading-relaxed">{result.human_explanation}</p>
                       </motion.div>
-
-                      {/* Grid: analysis + cost */}
                       <div className="grid grid-cols-2 gap-2.5">
-                        {[
-                          { label: 'Analiza Dźwięku', content: result.reasoning, delay: 0.08 },
-                          {
-                            label: 'Szacowany Koszt',
-                            content: result.cost_and_action?.match(/[\d,.]+\s*(?:PLN|zł)/i)?.[0] || '—',
-                            sub: 'netto, szacunkowo',
-                            large: true,
-                            delay: 0.12,
-                          },
-                        ].map(({ label, content, sub, large, delay }) => (
-                          <motion.div
-                            key={label}
-                            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, ...springSmooth }}
-                            className="rounded-2xl p-4"
-                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-                          >
-                            <p className="text-[9px] text-white/22 uppercase tracking-wider mb-2 font-semibold">{label}</p>
-                            {large ? (
-                              <>
-                                <p className="text-[17px] font-bold text-white/85">{content}</p>
-                                {sub && <p className="text-[9px] text-white/20 mt-1">{sub}</p>}
-                              </>
-                            ) : (
-                              <p className="text-[12px] text-white/55 leading-relaxed line-clamp-5">{content}</p>
-                            )}
-                          </motion.div>
-                        ))}
+                        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, ...springSmooth }}
+                          className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <p className="text-[10px] text-white/42 uppercase tracking-wider mb-2 font-bold">Analiza Dźwięku</p>
+                          <p className="text-[12px] text-white/65 leading-relaxed line-clamp-5">{result.reasoning}</p>
+                        </motion.div>
+                        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12, ...springSmooth }}
+                          className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <p className="text-[10px] text-white/42 uppercase tracking-wider mb-2 font-bold">Szacowany Koszt</p>
+                          <p className="text-[17px] font-bold text-white/85">{result.cost_and_action?.match(/[\d,.]+\s*(?:PLN|zł)/i)?.[0] || '—'}</p>
+                          <p className="text-[9px] text-white/20 mt-1">netto, szacunkowo</p>
+                        </motion.div>
                       </div>
-
-                      {/* Recommendation */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16, ...springSmooth }}
-                        className="rounded-2xl p-4"
-                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-                      >
-                        <p className="text-[9px] text-[#f59e0b]/55 uppercase font-semibold mb-2.5 flex items-center gap-1.5 tracking-wider">
-                          <Wrench className="w-3 h-3" /> Plan Działania
-                        </p>
-                        <p className="text-[13px] text-white/50 leading-relaxed">{result.cost_and_action || result.action_plan}</p>
+                      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16, ...springSmooth }}
+                        className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <p className="text-[10px] text-[#f59e0b]/80 uppercase font-bold mb-2.5 flex items-center gap-1.5 tracking-wider"><Wrench className="w-3 h-3" /> Plan Działania</p>
+                        <p className="text-[13px] text-white/65 leading-relaxed">{result.cost_and_action}</p>
                       </motion.div>
-
-                      {/* Chat CTA */}
-                      <motion.button
-                        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, ...springSmooth }}
-                        onClick={() => setActiveTab('chat')}
-                        whileTap={{ scale: 0.98 }}
-                        className="w-full rounded-2xl p-4 flex items-center gap-3.5 transition-all"
-                        style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.07), rgba(6,13,20,0.9))', border: '1px solid rgba(0,212,255,0.14)' }}
-                      >
+                      <motion.button initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, ...springSmooth }}
+                        onClick={() => { if (!chatInitRef.current) { chatInitRef.current = true; setChatMessages([{ role: 'model', content: result.chat_opener || `Diagnoza: **${result.diagnosis_title}**. Masz pytania?` }]); } setShowResults(true); }}
+                        whileTap={{ scale: 0.98 }} className="w-full rounded-2xl p-4 flex items-center gap-3.5"
+                        style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.07), rgba(6,13,20,0.9))', border: '1px solid rgba(0,212,255,0.14)' }}>
                         <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(0,212,255,0.1)' }}>
                           <MessageCircle className="w-4.5 h-4.5 text-[#00d4ff]" />
                         </div>
-                        <div className="flex-1 text-left">
-                          <p className="text-[13px] font-semibold text-white/80">Zapytaj AI Mechanika</p>
-                          <p className="text-[11px] text-white/32 mt-0.5">Zadaj pytanie o diagnozę</p>
-                        </div>
+                        <div className="flex-1 text-left"><p className="text-[13px] font-semibold text-white/80">Zapytaj AI Mechanika</p><p className="text-[11px] text-white/32 mt-0.5">Zadaj pytanie o diagnozę</p></div>
                         <ChevronRight className="w-4 h-4 text-[#00d4ff]/35 shrink-0" />
                       </motion.button>
                     </>
@@ -856,387 +484,42 @@ export default function SonicDiagnostic() {
               </motion.div>
             )}
 
-            {/* ══════════ HISTORY ══════════ */}
-            {activeTab === 'history' && (
-              <motion.div
-                key="history"
-                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                transition={springSmooth}
-                className="absolute inset-0 overflow-y-auto"
-              >
-                <div className="px-5 pt-2 pb-8">
-                  <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-[20px] font-bold text-white/88">Historia Diagnoz</h2>
-                    {isFetchingHistory && <RefreshCcw className="w-4 h-4 text-white/22 animate-spin" />}
-                  </div>
+            {/* BIKE TAB */}
+            {activeTab === 'bike' && <BikeTab credits={credits} onNeedCredits={() => setShowCreditModal(true)} fetchUserData={fetchUserData} />}
 
-                  {!isSignedIn ? (
-                    <div className="rounded-2xl p-8 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                        <FileAudio className="w-6 h-6 text-white/18" />
-                      </div>
-                      <p className="text-[13px] text-white/38 mb-5 leading-relaxed">Zaloguj się, aby przeglądać historię diagnoz</p>
-                      <SignInButton mode="modal">
-                        <button className="px-6 py-2.5 rounded-full text-[13px] font-medium text-white/65 transition-all hover:text-white/80"
-                          style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                          Zaloguj się
-                        </button>
-                      </SignInButton>
-                    </div>
-                  ) : isFetchingHistory && diagnosisHistory.length === 0 ? (
-                    <div className="flex justify-center py-16"><RefreshCcw className="w-4 h-4 text-white/15 animate-spin" /></div>
-                  ) : diagnosisHistory.length === 0 ? (
-                    <div className="rounded-2xl p-8 text-center opacity-40" style={{ border: '1px solid rgba(255,255,255,0.04)' }}>
-                      <p className="text-[13px] text-white/40">Historia jest pusta</p>
-                      <p className="text-[11px] text-white/24 mt-1">Nowe skany pojawią się tutaj</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {diagnosisHistory.map((item, i) => (
-                        <motion.div
-                          key={item.id || i}
-                          initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: Math.min(i * 0.04, 0.28), ...springSmooth }}
-                          className="rounded-2xl p-4"
-                          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0
-                              ${item.severity === 'CRITICAL' ? 'bg-red-500/10' : item.severity === 'SAFE' ? 'bg-[#10b981]/10' : 'bg-[#f59e0b]/10'}`}>
-                              <FileAudio className={`w-4.5 h-4.5 ${item.severity === 'CRITICAL' ? 'text-red-400' : item.severity === 'SAFE' ? 'text-[#10b981]' : 'text-[#f59e0b]'}`} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="text-[13px] font-semibold text-white/78 leading-tight">{item.diagnosisTitle}</p>
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums
-                                  ${item.severity === 'CRITICAL' ? 'bg-red-500/12 text-red-400' : item.severity === 'SAFE' ? 'bg-[#10b981]/12 text-[#10b981]' : 'bg-[#f59e0b]/12 text-[#f59e0b]'}`}>
-                                  {item.confidenceScore}%
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-white/28 mt-1">
-                                {new Date(item.createdAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                {' · '}{item.machineCategory}{item.makeModel ? ` (${item.makeModel})` : ''}
-                              </p>
-                            </div>
-                          </div>
-                          {item.actionPlan && (
-                            <div className="mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                              <p className="text-[12px] text-white/38 line-clamp-2 leading-relaxed">{item.actionPlan}</p>
-                              {item.repairCost && (
-                                <p className="text-[10px] text-[#f59e0b]/55 mt-1.5 font-medium">{item.repairCost}</p>
-                              )}
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
-                      <p className="text-center text-[9px] text-white/10 uppercase tracking-[0.16em] mt-3">Koniec historii</p>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
+            {/* ENGINE TAB */}
+            {activeTab === 'engine' && <EngineTab credits={credits} onNeedCredits={() => setShowCreditModal(true)} />}
 
-            {/* ══════════ CHAT ══════════ */}
-            {activeTab === 'chat' && (
-              <motion.div
-                key="chat"
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="absolute inset-0 flex flex-col"
-              >
-                {/* iMessage-style chat header */}
-                <div className="shrink-0 flex flex-col items-center pt-2 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center mb-1.5"
-                    style={{ background: 'radial-gradient(circle at 38% 32%, rgba(0,80,140,0.85), rgba(6,13,20,0.95))', border: '1px solid rgba(0,212,255,0.2)', boxShadow: '0 0 20px rgba(0,212,255,0.12)' }}>
-                    <Wrench className="w-5 h-5 text-[#00d4ff]" />
-                  </div>
-                  <p className="text-[14px] font-semibold text-white/90 leading-none">Mechanik AI</p>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#34C759]" style={{ filter: 'drop-shadow(0 0 3px rgba(52,199,89,0.9))' }} />
-                    <span className="text-[11px] text-white/38">
-                      {result ? result.diagnosis_title : 'Gotowy do pomocy'}
-                    </span>
-                  </div>
-                </div>
+            {/* CHAT TAB */}
+            {activeTab === 'chat' && <ChatTab credits={credits} fetchUserData={fetchUserData} diagnosisHistory={diagnosisHistory} />}
 
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto px-4 py-5 space-y-2">
-                  {chatMessages.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full gap-3 opacity-40">
-                      <div className="w-14 h-14 rounded-full flex items-center justify-center"
-                        style={{ background: 'rgba(255,255,255,0.05)' }}>
-                        <MessageCircle className="w-7 h-7 text-white/30" />
-                      </div>
-                      <p className="text-[13px] text-white/35 text-center leading-relaxed max-w-[200px]">Zadaj pytanie mechanikowi lub nagraj dźwięk maszyny</p>
-                    </div>
-                  )}
-
-                  <AnimatePresence initial={false}>
-                    {chatMessages.map((msg, i) => {
-                      const isUser = msg.role === 'user';
-                      const prevMsg = chatMessages[i - 1];
-                      const isFirst = !prevMsg || prevMsg.role !== msg.role;
-                      return (
-                        <motion.div
-                          key={i}
-                          initial={{ opacity: 0, y: 10, scale: 0.96 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          transition={{ duration: 0.2, ease: [0.34, 1.2, 0.64, 1] }}
-                          className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
-                          style={{ marginBottom: isFirst && i > 0 ? '6px' : '2px' }}
-                        >
-                          <div
-                            className={`max-w-[76%] px-4 py-2.5 text-[14px] leading-[1.5] whitespace-pre-wrap ${
-                              isUser
-                                ? 'rounded-[20px] rounded-br-[6px] text-white font-[400]'
-                                : 'rounded-[20px] rounded-bl-[6px] text-white/88 font-[400]'
-                            }`}
-                            style={isUser
-                              ? { background: '#0A84FF' }
-                              : { background: 'rgba(44,44,46,0.95)' }
-                            }
-                          >
-                            {msg.content}
-                          </div>
-                        </motion.div>
-                      );
-                    })}
-                  </AnimatePresence>
-
-                  {/* Typing indicator — iMessage dots */}
-                  <AnimatePresence>
-                    {isChatLoading && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 6, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
-                        className="flex justify-start"
-                      >
-                        <div className="px-4 py-3 rounded-[20px] rounded-bl-[6px] flex items-center gap-1"
-                          style={{ background: 'rgba(44,44,46,0.95)' }}>
-                          {[0, 0.2, 0.4].map((delay) => (
-                            <motion.div
-                              key={delay}
-                              className="w-2 h-2 rounded-full"
-                              style={{ background: 'rgba(255,255,255,0.45)' }}
-                              animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1.1, 0.8] }}
-                              transition={{ repeat: Infinity, duration: 1.2, delay, ease: 'easeInOut' }}
-                            />
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  <div ref={chatEndRef} />
-                </div>
-
-                {/* iMessage-style input bar */}
-                <div className="shrink-0 px-4 pb-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-end gap-2.5">
-                    <div className="flex-1 rounded-[22px] px-4 py-2.5 min-h-[44px] flex items-center"
-                      style={{ background: 'rgba(44,44,46,0.95)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendChatMessage()}
-                        placeholder="iMessage"
-                        disabled={isChatLoading}
-                        className="flex-1 bg-transparent text-[15px] text-white/85 outline-none placeholder:text-white/22 disabled:opacity-50"
-                      />
-                    </div>
-                    <motion.button
-                      onClick={sendChatMessage}
-                      disabled={!chatInput.trim() || isChatLoading}
-                      whileTap={{ scale: 0.85 }}
-                      className="w-[44px] h-[44px] rounded-full flex items-center justify-center transition-all shrink-0"
-                      style={{ background: chatInput.trim() && !isChatLoading ? '#0A84FF' : 'rgba(255,255,255,0.08)' }}
-                    >
-                      <Send className={`w-4 h-4 ${chatInput.trim() && !isChatLoading ? 'text-white' : 'text-white/25'}`} style={{ transform: 'translateX(1px)' }} />
-                    </motion.button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* ══════════ SETTINGS ══════════ */}
-            {activeTab === 'settings' && (
-              <motion.div
-                key="settings"
-                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                transition={springSmooth}
-                className="absolute inset-0 overflow-y-auto"
-              >
-                <div className="px-5 pt-2 pb-10 space-y-5">
-                  <div className="flex items-center gap-3 mb-1">
-                    <motion.button
-                      onClick={() => setActiveTab('home')}
-                      whileTap={{ scale: 0.9 }}
-                      className="w-8 h-8 rounded-full flex items-center justify-center"
-                      style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      <ChevronRight className="w-4 h-4 text-white/50 rotate-180" />
-                    </motion.button>
-                    <h2 className="text-[20px] font-bold text-white/88">Ustawienia</h2>
-                  </div>
-
-                  {/* Credits / upgrade */}
-                  <div className="rounded-2xl p-5 relative overflow-hidden"
-                    style={{ background: 'linear-gradient(145deg, rgba(245,158,11,0.09), rgba(6,13,20,0.96))', border: '1px solid rgba(245,158,11,0.2)' }}>
-                    <div className="absolute -top-10 -right-10 w-28 h-28 rounded-full pointer-events-none" style={{ background: 'rgba(245,158,11,0.12)', filter: 'blur(24px)' }} />
-                    <div className="flex items-start justify-between mb-4 relative">
-                      <div>
-                        <h3 className="text-[15px] font-bold text-white/88 flex items-center gap-2 mb-1">
-                          <Zap className="w-4 h-4 text-[#f59e0b]" /> Pakiety Skanów
-                        </h3>
-                        <p className="text-[11px] text-white/38 leading-relaxed max-w-[200px]">Kup kredyty i diagnozuj maszyny od ręki</p>
-                      </div>
-                      {credits !== null && (
-                        <div className="text-right">
-                          <p className="text-[26px] font-bold text-[#f59e0b] leading-none tabular-nums">{credits}</p>
-                          <p className="text-[9px] text-white/28 uppercase tracking-wider mt-0.5">pozostało</p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-2.5 relative">
-                      <div className="flex items-center justify-between p-3.5 rounded-xl" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div>
-                          <p className="text-[13px] font-semibold text-white/78">5 Skanów</p>
-                          <p className="text-[10px] text-white/32 mt-0.5">Podstawowa Diagnoza</p>
-                        </div>
-                        <button
-                          onClick={() => handleBuyCredits('5_credits')}
-                          disabled={isRedirectingToStripe}
-                          className="px-4 py-2 rounded-lg text-[12px] font-bold transition-colors disabled:opacity-50"
-                          style={{ background: '#f59e0b', color: '#000' }}
-                        >
-                          29 PLN
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3.5 rounded-xl relative overflow-hidden" style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.24)' }}>
-                        <div className="absolute top-2 right-2 bg-[#f59e0b] text-black text-[8px] font-bold px-1.5 py-0.5 rounded-[3px] uppercase">BEST</div>
-                        <div>
-                          <p className="text-[13px] font-semibold text-white/88">15 Skanów PRO</p>
-                          <p className="text-[10px] text-white/38 mt-0.5">Dla mechaników · taniej</p>
-                        </div>
-                        <button
-                          onClick={() => handleBuyCredits('15_credits')}
-                          disabled={isRedirectingToStripe}
-                          className="px-4 py-2 rounded-lg text-[12px] font-bold transition-colors disabled:opacity-50 mt-3"
-                          style={{ background: '#f59e0b', color: '#000' }}
-                        >
-                          69 PLN
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Settings list */}
-                  <div>
-                    <p className="text-[9px] text-white/18 font-semibold uppercase tracking-[0.14em] mb-3">Preferencje</p>
-                    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.05)' }}>
-                      {/* Language */}
-                      <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.03)' }}>
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(0,212,255,0.1)' }}>
-                            <Globe className="w-4 h-4 text-[#00d4ff]/55" />
-                          </div>
-                          <div>
-                            <p className="text-[13px] font-medium text-white/72">Język</p>
-                            <p className="text-[10px] text-white/28">Interfejs i diagnoza</p>
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          <span className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-white/70" style={{ background: 'rgba(255,255,255,0.1)' }}>PL</span>
-                          <span className="px-2.5 py-1 rounded-lg text-[11px] text-white/22">EN</span>
-                        </div>
-                      </div>
-                      {/* Account */}
-                      <div className="flex items-center justify-between px-4 py-3.5" style={{ background: 'rgba(255,255,255,0.03)' }}>
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.1)' }}>
-                            <User className="w-4 h-4 text-[#f59e0b]/55" />
-                          </div>
-                          <div>
-                            <p className="text-[13px] font-medium text-white/72">Konto</p>
-                            <p className="text-[10px] text-white/28">Zarządzaj profilem</p>
-                          </div>
-                        </div>
-                        <SignedIn>
-                          <UserButton appearance={{ elements: { avatarBox: 'w-7 h-7' } }} />
-                        </SignedIn>
-                        <SignedOut>
-                          <SignInButton mode="modal">
-                            <button className="text-[12px] text-[#00d4ff]/65 hover:text-[#00d4ff] transition-colors">Zaloguj</button>
-                          </SignInButton>
-                        </SignedOut>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="flex items-center justify-between px-4 py-3.5" style={{ background: 'rgba(255,255,255,0.03)' }}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                          <HelpCircle className="w-4 h-4 text-white/28" />
-                        </div>
-                        <div>
-                          <p className="text-[13px] font-medium text-white/72">Wsparcie</p>
-                          <p className="text-[10px] text-white/28">FAQ & Kontakt</p>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-white/14" />
-                    </div>
-                  </div>
-
-                  <div className="text-center pt-3 space-y-1">
-                    <p className="text-[9px] text-white/12 uppercase tracking-[0.16em]">Sonic Diagnostic v5.0</p>
-                    <p className="text-[9px] text-white/8">Powered by Anto-Lab</p>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
+            {/* SETTINGS TAB */}
+            {activeTab === 'settings' && <SettingsTab credits={credits} isRedirectingToStripe={isRedirectingToStripe} handleBuyCredits={handleBuyCredits} diagnosisHistory={diagnosisHistory} isFetchingHistory={isFetchingHistory} isSignedIn={!!isSignedIn} />}
           </AnimatePresence>
         </div>
 
-        {/* ── BOTTOM NAVIGATION ── */}
+        {/* BOTTOM NAVIGATION */}
         <div className="shrink-0 px-5 pb-4 pt-2" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)' }}>
-          <motion.nav
-            initial={{ y: 36, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.18, ...springBouncy }}
-            className="flex items-center justify-around px-4 py-2 rounded-[30px]"
-            style={{ background: 'rgba(12,20,30,0.75)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', WebkitBackdropFilter: 'blur(60px)' }}
-          >
+          <motion.nav initial={{ y: 36, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.18, ...springBouncy }}
+            className="flex items-center justify-around px-2 py-2 rounded-[30px]"
+            style={{ background: 'rgba(12,20,30,0.75)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', WebkitBackdropFilter: 'blur(60px)' }}>
             {([
-              { id: 'home'    as TabId, icon: Home,          label: 'Skaner' },
-              { id: 'history' as TabId, icon: Clock,         label: 'Historia' },
-              { id: 'chat'    as TabId, icon: MessageCircle, label: 'Czat' },
-            ]).map((tab) => {
+              { id: 'home' as TabId, icon: Home, label: 'Auto' },
+              { id: 'bike' as TabId, icon: Bike, label: 'Rower' },
+              { id: 'engine' as TabId, icon: Target, label: 'Silnik' },
+              { id: 'chat' as TabId, icon: MessageCircle, label: 'Chat' },
+            ]).map(tab => {
               const isActive = activeTab === tab.id;
               return (
-                <motion.button
-                  key={tab.id}
-                  onClick={() => { setActiveTab(tab.id); if (tab.id !== 'home') setShowResults(false); }}
-                  whileTap={{ scale: 0.9 }}
-                  className="relative flex flex-col items-center gap-1.5 px-6 py-3 rounded-[22px] transition-colors"
-                >
+                <motion.button key={tab.id} onClick={() => { setActiveTab(tab.id); if (tab.id !== 'home') setShowResults(false); }}
+                  whileTap={{ scale: 0.9 }} className="relative flex flex-col items-center gap-1 px-3 py-2.5 rounded-[22px]">
                   {isActive && (
-                    <motion.div
-                      layoutId="nav-bg"
-                      className="absolute inset-0 rounded-[22px]"
-                      style={{ background: 'rgba(255,255,255,0.1)' }}
-                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                    />
+                    <motion.div layoutId="nav-bg" className="absolute inset-0 rounded-[22px]" style={{ background: 'rgba(255,255,255,0.1)' }}
+                      transition={{ type: 'spring', stiffness: 420, damping: 32 }} />
                   )}
-                  <tab.icon
-                    className={`w-[20px] h-[20px] relative z-10 transition-all duration-200 ${isActive ? 'text-white' : 'text-white/28'}`}
-                    style={isActive ? { filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.35))' } : {}}
-                  />
-                  <span className={`text-[10px] font-medium relative z-10 transition-colors duration-200 ${isActive ? 'text-white/80' : 'text-white/25'}`}>
-                    {tab.label}
-                  </span>
+                  <tab.icon className={`w-[20px] h-[20px] relative z-10 transition-all duration-200 ${isActive ? 'text-white' : 'text-white/28'}`}
+                    style={isActive ? { filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.35))' } : {}} />
+                  <span className={`text-[10px] font-medium relative z-10 transition-colors duration-200 ${isActive ? 'text-white/80' : 'text-white/25'}`}>{tab.label}</span>
                 </motion.button>
               );
             })}
@@ -1244,125 +527,136 @@ export default function SonicDiagnostic() {
         </div>
       </div>
 
-      {/* ════════════════════════════════════════
-          CONTEXT BOTTOM SHEET
-          ════════════════════════════════════════ */}
+      {/* CONTEXT BOTTOM SHEET */}
       <AnimatePresence>
         {showContextSheet && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40"
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40"
               style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)' }}
-              onClick={() => setShowContextSheet(false)}
-            />
-            <motion.div
-              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              onClick={() => { setShowContextSheet(false); setPendingAction(null); }} />
+            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ ...springBouncy, damping: 30 }}
               className="fixed bottom-0 left-0 right-0 z-50 rounded-t-[28px] px-5 flex flex-col max-h-[85dvh] overflow-y-auto"
-              style={{ background: 'rgba(10,18,28,0.92)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 24px)' }}
-            >
+              style={{ background: 'rgba(10,18,28,0.92)', border: '1px solid rgba(255,255,255,0.09)', backdropFilter: 'blur(60px)', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 24px)' }}>
               <div className="w-8 h-1 rounded-full mx-auto mt-3 mb-5 shrink-0" style={{ background: 'rgba(255,255,255,0.15)' }} />
-              <h3 className="text-[17px] font-bold text-white/88 mb-5 shrink-0">Kontekst Maszyny</h3>
+              <h3 className={`text-[17px] font-bold text-white/88 shrink-0 ${pendingAction ? 'mb-1' : 'mb-5'}`}>Kontekst Pojazdu</h3>
+              {pendingAction && <p className="text-[12px] text-white/55 mb-4">Czym więcej szczegółów, tym trafniejsza diagnoza. Możesz pominąć.</p>}
 
-              <label className="text-[9px] text-white/25 uppercase tracking-[0.14em] mb-2 block font-semibold">Kategoria</label>
-              <div className="flex gap-2 mb-5">
-                {['Auto', 'AGD', 'Przemysł', 'Inne'].map((cat) => (
-                  <button key={cat} onClick={() => setCategory(cat)}
-                    className="flex-1 py-2.5 rounded-xl text-[12px] font-medium transition-all"
-                    style={category === cat
+              <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Zdjęcie / Wideo usterki (Opcjonalnie)</label>
+              {uploadedFile ? (
+                <div className="relative rounded-2xl p-4 flex items-center justify-between mb-4" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    <FileAudio className="w-5 h-5 text-[#10b981] shrink-0" />
+                    <span className="text-[13px] text-white/88 truncate">{uploadedFile.name}</span>
+                  </div>
+                  <button onClick={(e) => { e.preventDefault(); setUploadedFile(null); }} className="shrink-0 ml-2 p-1"><X className="w-4 h-4 text-white/40 hover:text-white" /></button>
+                </div>
+              ) : (
+                <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center justify-center gap-2 py-4 rounded-xl mb-4 transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.2)' }}>
+                  <Upload className="w-4 h-4 text-white/60" />
+                  <span className="text-[13px] text-white/60">Dodaj zdjęcie lub wideo</span>
+                </button>
+              )}
+
+              <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Marka</label>
+              <input type="text" placeholder="np. BMW, Toyota, Volkswagen" value={marka} onChange={e => setMarka(e.target.value)}
+                className="w-full text-[14px] text-white/88 mb-4 rounded-xl p-4 outline-none placeholder:text-white/28 input-glow"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }} />
+
+              <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Model</label>
+              <input type="text" placeholder="np. E46 320d, Corolla, Golf 7" value={model} onChange={e => setModel(e.target.value)}
+                className="w-full text-[14px] text-white/88 mb-4 rounded-xl p-4 outline-none placeholder:text-white/28 input-glow"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }} />
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Rok produkcji</label>
+                  <input type="text" placeholder="np. 2015" value={rokProdukcji} onChange={e => setRokProdukcji(e.target.value)}
+                    className="w-full text-[14px] text-white/88 rounded-xl p-4 outline-none placeholder:text-white/28 input-glow"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Przebieg</label>
+                  <input type="text" placeholder="np. 180 000 km" value={przebieg} onChange={e => setPrzebieg(e.target.value)}
+                    className="w-full text-[14px] text-white/88 rounded-xl p-4 outline-none placeholder:text-white/28 input-glow"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }} />
+                </div>
+              </div>
+
+              <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2.5 block font-bold">Typ paliwa</label>
+              <div className="flex flex-wrap gap-2 mb-5">
+                {FUEL_TYPES.map(f => (
+                  <button key={f} onClick={() => setTypPaliwa(f)}
+                    className="px-3 py-2 rounded-xl text-[12px] font-medium transition-all"
+                    style={typPaliwa === f
                       ? { background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.82)', border: '1px solid rgba(255,255,255,0.18)' }
-                      : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.32)', border: '1px solid rgba(255,255,255,0.06)' }
-                    }>
-                    {cat}
+                      : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.32)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    {f}
                   </button>
                 ))}
               </div>
 
-              <label className="text-[9px] text-white/25 uppercase tracking-[0.14em] mb-2 block font-semibold">Marka / Model</label>
-              <input
-                type="text"
-                placeholder="np. BMW E46 / Bosch WAN28…"
-                value={makeModel}
-                onChange={(e) => setMakeModel(e.target.value)}
-                className="w-full text-[13px] text-white/78 mb-5 rounded-xl p-3.5 outline-none transition-colors placeholder:text-white/18"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-              />
+              <label className="text-[10px] text-white/48 uppercase tracking-[0.12em] mb-2 block font-bold">Objawy</label>
+              <textarea placeholder="np. stuka na zimnym silniku, grzechocze przy 2000 obr…" value={symptoms} onChange={e => setSymptoms(e.target.value)}
+                className="w-full text-[14px] text-white/88 rounded-xl p-4 h-24 outline-none resize-none placeholder:text-white/28 mb-5 input-glow"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }} />
 
-              <label className="text-[9px] text-white/25 uppercase tracking-[0.14em] mb-2 block font-semibold">Objawy</label>
-              <textarea
-                placeholder="np. stuka na zimnym silniku, grzechocze przy 2000 obr…"
-                value={symptoms}
-                onChange={(e) => setSymptoms(e.target.value)}
-                className="w-full text-[13px] text-white/78 rounded-xl p-3.5 h-24 outline-none resize-none transition-colors placeholder:text-white/18 mb-5"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-              />
-
-              <button
-                onClick={() => setShowContextSheet(false)}
-                className="w-full font-semibold py-3.5 rounded-2xl text-[13px] transition-all active:scale-[0.99]"
-                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.75)' }}
-              >
-                Zapisz kontekst
-              </button>
+              {!pendingAction ? (
+                <button onClick={() => setShowContextSheet(false)}
+                  className="w-full font-bold py-4 rounded-2xl text-[14px] active:scale-[0.99]"
+                  style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(0,100,180,0.1))', border: '1px solid rgba(0,212,255,0.28)', color: 'rgba(255,255,255,0.9)' }}>
+                  Gotowe
+                </button>
+              ) : (
+                <div className="flex gap-3">
+                  <button onClick={() => { setShowContextSheet(false); const a = pendingAction; setPendingAction(null); setTimeout(() => { if (a === 'record') startRecording(); else if (a === 'analyze') analyzeUploadedFile(); }, 100); }}
+                    className="flex-[0.8] font-bold py-4 rounded-2xl text-[14px] active:scale-[0.99]"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.6)' }}>Pomiń</button>
+                  <button onClick={() => { setShowContextSheet(false); const a = pendingAction; setPendingAction(null); setTimeout(() => { if (a === 'record') startRecording(); else if (a === 'analyze') analyzeUploadedFile(); }, 100); }}
+                    className="flex-[1.2] font-bold py-4 rounded-2xl text-[14px] active:scale-[0.99]"
+                    style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(0,100,180,0.1))', border: '1px solid rgba(0,212,255,0.28)', color: 'rgba(255,255,255,0.9)' }}>
+                    Gotowe i {pendingAction === 'record' ? 'Skanuj' : 'Analizuj'}
+                  </button>
+                </div>
+              )}
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
-      {/* ════════════════════════════════════════
-          CREDIT MODAL
-          ════════════════════════════════════════ */}
+      {/* CREDIT MODAL */}
       <AnimatePresence>
         {showCreditModal && (
           <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[60]"
-              style={{ background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(16px)' }}
-              onClick={() => setShowCreditModal(false)}
-            />
-            <motion.div
-              initial={{ scale: 0.88, opacity: 0, y: 24 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.88, opacity: 0, y: 24 }}
-              transition={springBouncy}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-[85%] max-w-sm rounded-3xl p-6 text-center"
-              style={{ background: 'rgba(10,18,28,0.95)', border: '1px solid rgba(245,158,11,0.2)', backdropFilter: 'blur(60px)' }}
-            >
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60]"
+              style={{ background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(16px)' }} onClick={() => setShowCreditModal(false)} />
+            <motion.div initial={{ scale: 0.88, opacity: 0, y: 24 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.88, opacity: 0, y: 24 }}
+              transition={springBouncy} className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-[85%] max-w-sm rounded-3xl p-6 text-center"
+              style={{ background: 'rgba(10,18,28,0.95)', border: '1px solid rgba(245,158,11,0.2)', backdropFilter: 'blur(60px)' }}>
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
                 style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)' }}>
                 <Zap className="w-7 h-7 text-[#f59e0b]" style={{ filter: 'drop-shadow(0 0 12px rgba(245,158,11,0.6))' }} />
               </div>
-              <h3 className="text-[20px] font-bold text-white mb-2">Brak Kredytów</h3>
-              <p className="text-[13px] text-white/38 mb-6 leading-relaxed px-2">
-                Zapas skanów się wyczerpał.<br />Uzupełnij aby kontynuować diagnozy AI.
-              </p>
-              <button
-                onClick={() => handleBuyCredits('5_credits')}
-                disabled={isRedirectingToStripe}
-                className="w-full font-bold py-3.5 rounded-2xl text-[13px] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                style={{ background: '#f59e0b', color: '#000' }}
-              >
-                {isRedirectingToStripe
-                  ? <RefreshCcw className="w-4 h-4 animate-spin" />
-                  : <><Zap className="w-4 h-4" /> 5 Skanów — 29 PLN</>
-                }
+              <h3 className="text-[22px] font-bold text-white mb-2">Brak Kredytów</h3>
+              <p className="text-[14px] text-white/58 mb-6">Uzupełnij aby kontynuować diagnozy AI.</p>
+              <button onClick={() => handleBuyCredits('5_credits')} disabled={isRedirectingToStripe}
+                className="w-full font-bold py-3.5 rounded-2xl text-[13px] flex items-center justify-center gap-2 disabled:opacity-50"
+                style={{ background: '#f59e0b', color: '#000' }}>
+                {isRedirectingToStripe ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <><Zap className="w-4 h-4" /> 5 Skanów — 29 PLN</>}
               </button>
-              <button onClick={() => setShowCreditModal(false)} className="mt-4 text-[11px] text-white/22 hover:text-white/45 transition-colors uppercase tracking-wider font-medium">
-                Anuluj
-              </button>
+              <button onClick={() => setShowCreditModal(false)} className="mt-4 text-[12px] text-white/35 hover:text-white/60 uppercase tracking-wider font-medium">Anuluj</button>
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
-      {/* ── TOAST ── */}
+      {/* TOAST */}
       <AnimatePresence>
         {toastMessage && (
-          <motion.div
-            initial={{ y: -36, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -36, opacity: 0 }}
+          <motion.div initial={{ y: -36, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -36, opacity: 0 }}
             className="fixed top-16 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2.5 px-5 py-3 rounded-full"
-            style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.22)', backdropFilter: 'blur(20px)' }}
-          >
+            style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.22)', backdropFilter: 'blur(20px)' }}>
             <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.2)' }}>
               <Zap className="w-2.5 h-2.5 text-[#10b981]" />
             </div>
